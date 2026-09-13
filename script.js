@@ -456,19 +456,9 @@
 
   // ---------- Wheel drawing ----------
   function drawHub(center, radius) {
-    const hubGradient = ctx.createLinearGradient(
-      center - radius,
-      center - radius,
-      center + radius,
-      center + radius
-    );
-    hubGradient.addColorStop(0, "#f6e9bd");
-    hubGradient.addColorStop(0.5, "#b8912b");
-    hubGradient.addColorStop(1, "#7d6115");
-
     ctx.beginPath();
     ctx.arc(center, center, radius, 0, Math.PI * 2);
-    ctx.fillStyle = hubGradient;
+    ctx.fillStyle = "#b8912b";
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
@@ -477,11 +467,6 @@
     ctx.beginPath();
     ctx.arc(center, center, radius * 0.45, 0, Math.PI * 2);
     ctx.fillStyle = "#2a2a2e";
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(center - radius * 0.3, center - radius * 0.32, radius * 0.18, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
     ctx.fill();
   }
 
@@ -548,34 +533,14 @@
       ctx.restore();
     });
 
-    // Depth shading towards the outer edge.
-    const shade = ctx.createRadialGradient(
-      center,
-      center,
-      faceRadius * 0.25,
-      center,
-      center,
-      faceRadius
-    );
-    shade.addColorStop(0, "rgba(0, 0, 0, 0)");
-    shade.addColorStop(0.8, "rgba(0, 0, 0, 0.1)");
-    shade.addColorStop(1, "rgba(0, 0, 0, 0.45)");
-    ctx.beginPath();
-    ctx.arc(center, center, faceRadius, 0, Math.PI * 2);
-    ctx.fillStyle = shade;
-    ctx.fill();
-
     // Metal frets between pockets.
     entries.forEach((_, i) => {
       const angle = i * sliceAngle;
       const px = center + Math.cos(angle) * (faceRadius - 3);
       const py = center + Math.sin(angle) * (faceRadius - 3);
-      const pinGradient = ctx.createRadialGradient(px - 1, py - 1, 0.5, px, py, 3.5);
-      pinGradient.addColorStop(0, "#ffffff");
-      pinGradient.addColorStop(1, "#8d8d93");
       ctx.beginPath();
       ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = pinGradient;
+      ctx.fillStyle = "#c7c7cd";
       ctx.fill();
     });
 
