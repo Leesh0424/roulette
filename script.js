@@ -8,6 +8,7 @@
   const confettiCtx = confettiCanvas.getContext("2d");
 
   const categoryList = document.getElementById("category-list");
+  const wheelItemList = document.getElementById("wheel-item-list");
   const itemForm = document.getElementById("add-form");
   const itemInput = document.getElementById("item-input");
   const itemList = document.getElementById("item-list");
@@ -24,16 +25,16 @@
       id: makeId("cat"),
       name: "사업팀",
       items: [
-        { id: makeId("item"), name: "김사원" },
-        { id: makeId("item"), name: "하대리" },
+        { id: makeId("item"), name: "김사원", included: true },
+        { id: makeId("item"), name: "하대리", included: true },
       ],
     },
     {
       id: makeId("cat"),
       name: "홍보팀",
       items: [
-        { id: makeId("item"), name: "박팀장" },
-        { id: makeId("item"), name: "이주임" },
+        { id: makeId("item"), name: "박팀장", included: true },
+        { id: makeId("item"), name: "이주임", included: true },
       ],
     },
   ];
@@ -57,20 +58,41 @@
     return category ? category.items : [];
   }
 
+  // The wheel spins over items marked "included", regardless of which
+  // category they belong to, so a single roulette can mix e.g. 사업팀's
+  // 김사원 with 홍보팀's 박팀장. Each entry keeps a reference to the real
+  // item object (not a copy) so callers can mutate `included` back.
+  function getWheelEntries() {
+    const entries = [];
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (item.included) entries.push({ item, categoryName: category.name });
+      });
+    });
+    return entries;
+  }
+
   function reorder(array, fromIndex, toIndex) {
     const [moved] = array.splice(fromIndex, 1);
     array.splice(toIndex, 0, moved);
   }
 
+  function renderAll() {
+    renderCategories();
+    renderItems();
+    renderWheelItems();
+    drawWheel();
+  }
+
   // ---------- Wheel ----------
   function drawWheel() {
-    const items = getActiveItems();
+    const entries = getWheelEntries();
     const size = canvas.width;
     const center = size / 2;
     const radius = center - 4;
     ctx.clearRect(0, 0, size, size);
 
-    if (items.length === 0) {
+    if (entries.length === 0) {
       ctx.beginPath();
       ctx.arc(center, center, radius, 0, Math.PI * 2);
       ctx.fillStyle = "#ddd";
@@ -78,8 +100,8 @@
       return;
     }
 
-    const sliceAngle = (Math.PI * 2) / items.length;
-    items.forEach((item, i) => {
+    const sliceAngle = (Math.PI * 2) / entries.length;
+    entries.forEach((entry, i) => {
       const start = i * sliceAngle;
       const end = start + sliceAngle;
 
@@ -96,7 +118,7 @@
       ctx.textAlign = "right";
       ctx.fillStyle = "#fff";
       ctx.font = "bold 16px system-ui, sans-serif";
-      ctx.fillText(item.name, radius - 12, 6);
+      ctx.fillText(entry.item.name, radius - 12, 6);
       ctx.restore();
     });
   }
@@ -129,9 +151,7 @@
           const value = editInput.value.trim();
           if (value) category.name = value;
           editingCategoryId = null;
-          renderCategories();
-          renderItems();
-          drawWheel();
+          renderAll();
         };
         editInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter") commit();
@@ -152,9 +172,7 @@
         nameSpan.addEventListener("click", () => {
           if (spinning) return;
           activeCategoryId = category.id;
-          renderCategories();
-          renderItems();
-          drawWheel();
+          renderAll();
         });
         li.appendChild(nameSpan);
 
@@ -184,9 +202,7 @@
         if (activeCategoryId === category.id) {
           activeCategoryId = categories.length ? categories[0].id : null;
         }
-        renderCategories();
-        renderItems();
-        drawWheel();
+        renderAll();
       });
       li.appendChild(removeBtn);
 
@@ -232,9 +248,7 @@
           activeCategoryId = newCategory.id;
         }
         addingCategory = false;
-        renderCategories();
-        renderItems();
-        drawWheel();
+        renderAll();
       };
       addInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") commitAdd();
@@ -260,7 +274,7 @@
     categoryList.appendChild(addLi);
   }
 
-  // ---------- Item list ----------
+  // ---------- Item list (per category) ----------
   function renderItems() {
     itemList.innerHTML = "";
     const items = getActiveItems();
@@ -276,6 +290,19 @@
       handle.setAttribute("aria-hidden", "true");
       li.appendChild(handle);
 
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "item-checkbox";
+      checkbox.checked = item.included;
+      checkbox.disabled = spinning;
+      checkbox.setAttribute("aria-label", `${item.name} 룰렛에 포함`);
+      checkbox.addEventListener("change", () => {
+        item.included = checkbox.checked;
+        renderWheelItems();
+        drawWheel();
+      });
+      li.appendChild(checkbox);
+
       if (editingItemId === item.id) {
         const editInput = document.createElement("input");
         editInput.type = "text";
@@ -289,6 +316,7 @@
           if (value) item.name = value;
           editingItemId = null;
           renderItems();
+          renderWheelItems();
           drawWheel();
         };
         editInput.addEventListener("keydown", (e) => {
@@ -331,6 +359,7 @@
       removeBtn.addEventListener("click", () => {
         items.splice(index, 1);
         renderItems();
+        renderWheelItems();
         drawWheel();
       });
       li.appendChild(removeBtn);
@@ -353,6 +382,7 @@
         if (Number.isNaN(fromIndex) || fromIndex === index) return;
         reorder(items, fromIndex, index);
         renderItems();
+        renderWheelItems();
         drawWheel();
       });
 
@@ -361,7 +391,6 @@
 
     itemForm.hidden = !activeCategory;
     itemInput.disabled = spinning;
-    spinBtn.disabled = items.length < 2 || spinning;
   }
 
   itemForm.addEventListener("submit", (e) => {
@@ -369,11 +398,56 @@
     const value = itemInput.value.trim();
     const activeCategory = getActiveCategory();
     if (!value || !activeCategory) return;
-    activeCategory.items.push({ id: makeId("item"), name: value });
+    activeCategory.items.push({ id: makeId("item"), name: value, included: true });
     itemInput.value = "";
     renderItems();
+    renderWheelItems();
     drawWheel();
   });
+
+  // ---------- Wheel items panel (cross-category selection) ----------
+  function renderWheelItems() {
+    wheelItemList.innerHTML = "";
+    const entries = getWheelEntries();
+
+    if (entries.length === 0) {
+      const emptyLi = document.createElement("li");
+      emptyLi.className = "wheel-item-empty";
+      emptyLi.textContent = "포함된 항목이 없습니다. 아래 목록에서 항목의 체크박스를 선택하세요.";
+      wheelItemList.appendChild(emptyLi);
+    } else {
+      entries.forEach((entry) => {
+        const li = document.createElement("li");
+        li.className = "wheel-item-badge";
+
+        const catSpan = document.createElement("span");
+        catSpan.className = "wheel-item-category";
+        catSpan.textContent = entry.categoryName;
+        li.appendChild(catSpan);
+
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "wheel-item-name";
+        nameSpan.textContent = entry.item.name;
+        li.appendChild(nameSpan);
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "icon-btn";
+        removeBtn.textContent = "✕";
+        removeBtn.disabled = spinning;
+        removeBtn.setAttribute("aria-label", `${entry.categoryName} ${entry.item.name} 룰렛에서 제외`);
+        removeBtn.addEventListener("click", () => {
+          entry.item.included = false;
+          renderAll();
+        });
+        li.appendChild(removeBtn);
+
+        wheelItemList.appendChild(li);
+      });
+    }
+
+    spinBtn.disabled = entries.length < 2 || spinning;
+  }
 
   // ---------- Winner effects ----------
   function resizeConfettiCanvas() {
@@ -457,20 +531,21 @@
 
   // ---------- Spin ----------
   spinBtn.addEventListener("click", () => {
-    const items = getActiveItems();
-    if (spinning || items.length < 2) return;
+    const entries = getWheelEntries();
+    if (spinning || entries.length < 2) return;
     spinning = true;
     result.textContent = "";
     result.classList.remove("celebrate");
     renderCategories();
     renderItems();
+    renderWheelItems();
 
     const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
     if (!audioCtx && AudioCtxClass) audioCtx = new AudioCtxClass();
     if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
 
-    const winnerIndex = Roulette.pickWinnerIndex(items.length);
-    const sliceAngle = 360 / items.length;
+    const winnerIndex = Roulette.pickWinnerIndex(entries.length);
+    const sliceAngle = 360 / entries.length;
     const targetSliceCenter = winnerIndex * sliceAngle + sliceAngle / 2;
     const extraSpins = 5 * 360;
     // Slices are drawn starting from canvas angle 0 (east) going clockwise,
@@ -490,8 +565,9 @@
         spinning = false;
         renderCategories();
         renderItems();
-        const winnerName = items[winnerIndex].name;
-        result.textContent = `결과: ${winnerName}`;
+        renderWheelItems();
+        const winner = entries[winnerIndex];
+        result.textContent = `결과: ${winner.categoryName} ${winner.item.name}`;
         result.classList.add("celebrate");
         launchConfetti();
         playFanfare();
@@ -500,7 +576,5 @@
     );
   });
 
-  renderCategories();
-  renderItems();
-  drawWheel();
+  renderAll();
 })();
