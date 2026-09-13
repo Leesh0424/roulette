@@ -47,6 +47,91 @@ h1 {
   opacity: 0.7;
 }
 
+.category-bar {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.category-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.category-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  user-select: none;
+}
+
+.category-chip.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.category-chip.drag-over,
+#item-list li.drag-over {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
+.category-name {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.category-chip.add-chip {
+  background: transparent;
+  border-style: dashed;
+}
+
+.category-chip.add-chip button {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  font-size: 0.9rem;
+}
+
+.drag-handle {
+  opacity: 0.4;
+  cursor: grab;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.icon-btn {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+.icon-btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.edit-input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.95rem;
+  width: 110px;
+}
+
 .layout {
   display: flex;
   gap: 32px;
@@ -95,6 +180,10 @@ h1 {
   gap: 8px;
 }
 
+#add-form[hidden] {
+  display: none;
+}
+
 #item-input {
   flex: 1;
   padding: 10px 12px;
@@ -124,6 +213,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 button.primary {
   background: var(--accent);
   color: #fff;
@@ -145,28 +239,47 @@ button.primary {
 #item-list li {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
 
-#item-list li button {
-  padding: 2px 8px;
-  border: none;
-  background: transparent;
-  font-size: 0.9rem;
-  opacity: 0.6;
-}
-
-#item-list li button:hover {
-  opacity: 1;
-  color: var(--accent);
+#item-list li .item-name {
+  flex: 1;
 }
 
 #result {
   min-height: 1.4em;
   font-size: 1.2rem;
   font-weight: 600;
+}
+
+#result.celebrate {
+  animation: result-pop 0.6s ease;
+}
+
+@keyframes result-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+#confetti-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 999;
 }

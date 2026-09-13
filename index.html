@@ -9,7 +9,11 @@
 <body>
   <main class="app">
     <h1>룰렛</h1>
-    <p class="subtitle">항목을 입력하고 돌려서 무작위로 하나를 선택하세요.</p>
+    <p class="subtitle">카테고리와 항목을 편집하고 돌려서 무작위로 하나를 선택하세요.</p>
+
+    <div class="category-bar">
+      <ul id="category-list" class="category-list"></ul>
+    </div>
 
     <div class="layout">
       <div class="wheel-wrap">
@@ -30,6 +34,8 @@
       </div>
     </div>
   </main>
+
+  <canvas id="confetti-canvas"></canvas>
 
   <script src="roulette.js"></script>
   <script src="script.js"></script>
