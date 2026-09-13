@@ -7,12 +7,27 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="result-banner">
+    <p id="result" aria-live="polite">카테고리와 항목을 골라 룰렛을 돌려보세요</p>
+  </div>
+
   <main class="app">
     <h1>룰렛</h1>
     <p class="subtitle">카테고리를 넘나들며 항목을 골라 하나의 룰렛으로 돌려보세요.</p>
 
-    <div class="category-bar">
-      <ul id="category-list" class="category-list"></ul>
+    <div class="wheel-section">
+      <div class="wheel-wrap">
+        <div class="pointer"></div>
+        <canvas id="wheel" width="360" height="360"></canvas>
+      </div>
+
+      <div class="play-controls">
+        <button id="spin-btn" class="primary">돌리기</button>
+        <div class="audio-controls">
+          <button id="mute-btn" type="button" aria-label="음소거">🔊</button>
+          <input id="volume-slider" type="range" min="0" max="100" value="60" aria-label="음량 조절">
+        </div>
+      </div>
     </div>
 
     <div class="wheel-items-panel">
@@ -20,27 +35,20 @@
       <ul id="wheel-item-list" class="wheel-item-list"></ul>
     </div>
 
-    <div class="layout">
-      <div class="wheel-wrap">
-        <div class="pointer"></div>
-        <canvas id="wheel" width="360" height="360"></canvas>
-      </div>
-
-      <div class="controls">
-        <form id="add-form">
-          <input id="item-input" type="text" placeholder="항목 입력 후 Enter" maxlength="30" autocomplete="off">
-          <button type="submit">추가</button>
-        </form>
-
-        <ul id="item-list"></ul>
-
-        <button id="spin-btn" class="primary">돌리기</button>
-        <p id="result" aria-live="polite"></p>
-      </div>
-    </div>
+    <div id="category-board" class="category-board"></div>
   </main>
 
   <canvas id="confetti-canvas"></canvas>
+
+  <div id="confirm-dialog" class="modal-overlay" hidden>
+    <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message">
+      <p id="confirm-message">정말 제거하시겠습니까?</p>
+      <div class="modal-actions">
+        <button id="confirm-cancel-btn" type="button">취소</button>
+        <button id="confirm-ok-btn" type="button" class="danger">제거</button>
+      </div>
+    </div>
+  </div>
 
   <script src="roulette.js"></script>
   <script src="script.js"></script>
