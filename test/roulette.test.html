@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>roulette.js 테스트</title>
+</head>
+<body>
+  <h1>roulette.js 테스트</h1>
+  <ul id="results"></ul>
+
+  <script src="../roulette.js"></script>
+  <script>
+    const results = document.getElementById("results");
+    let failures = 0;
+
+    function assert(description, condition) {
+      const li = document.createElement("li");
+      li.textContent = `${condition ? "PASS" : "FAIL"} - ${description}`;
+      li.style.color = condition ? "green" : "red";
+      results.appendChild(li);
+      if (!condition) failures++;
+    }
+
+    function assertThrows(description, fn) {
+      let threw = false;
+      try {
+        fn();
+      } catch (e) {
+        threw = true;
+      }
+      assert(description, threw);
+    }
+
+    // Always picks the only available index.
+    assert(
+      "single item always returns index 0",
+      Roulette.pickWinnerIndex(1, () => 0) === 0
+    );
+
+    // random() is expected to return a value in [0, 1); result must stay in range.
+    assert(
+      "random() near 0 returns first index",
+      Roulette.pickWinnerIndex(4, () => 0) === 0
+    );
+    assert(
+      "random() near 1 returns last index",
+      Roulette.pickWinnerIndex(4, () => 0.9999) === 3
+    );
+    assert(
+      "random() at midpoint returns a middle index",
+      Roulette.pickWinnerIndex(4, () => 0.5) === 2
+    );
+
+    // Default random source (Math.random) should still stay in bounds.
+    (function () {
+      let inBounds = true;
+      for (let i = 0; i < 200; i++) {
+        const index = Roulette.pickWinnerIndex(5);
+        if (!Number.isInteger(index) || index < 0 || index >= 5) {
+          inBounds = false;
+          break;
+        }
+      }
+      assert("Math.random()-backed calls stay within bounds over many runs", inBounds);
+    })();
+
+    assertThrows("itemCount of 0 throws", () => Roulette.pickWinnerIndex(0));
+    assertThrows("negative itemCount throws", () => Roulette.pickWinnerIndex(-1));
+    assertThrows("non-integer itemCount throws", () => Roulette.pickWinnerIndex(1.5));
+
+    const summary = document.createElement("p");
+    summary.id = "summary";
+    summary.textContent = failures === 0 ? "ALL TESTS PASSED" : `${failures} TEST(S) FAILED`;
+    summary.style.fontWeight = "bold";
+    summary.style.color = failures === 0 ? "green" : "red";
+    document.body.appendChild(summary);
+  </script>
+</body>
+</html>
