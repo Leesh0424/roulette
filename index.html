@@ -8,12 +8,18 @@
 </head>
 <body>
   <div class="result-banner">
-    <p id="result" aria-live="polite">카테고리와 항목을 골라 룰렛을 돌려보세요</p>
+    <div class="banner-inner">
+      <p id="result" aria-live="polite">룰렛을 돌려보세요</p>
+      <div class="top-actions">
+        <button id="reset-wins-btn" type="button">당첨횟수 초기화</button>
+        <button id="restore-wins-btn" type="button">당첨횟수 복구</button>
+      </div>
+    </div>
   </div>
 
   <main class="app">
-    <h1>룰렛</h1>
-    <p class="subtitle">카테고리를 넘나들며 항목을 골라 하나의 룰렛으로 돌려보세요.</p>
+    <h1 id="board-title" class="editable-heading"></h1>
+    <p id="board-subtitle" class="subtitle editable-heading"></p>
 
     <div class="wheel-section">
       <div class="wheel-wrap">

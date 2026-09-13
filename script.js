@@ -1,19 +1,30 @@
 (function () {
-  const COLORS = ["#ff5470", "#ff9f5a", "#ffd166", "#06d6a0", "#118ab2", "#8338ec"];
-  const CONFETTI_COLORS = ["#ff5470", "#ff9f5a", "#ffd166", "#06d6a0", "#118ab2", "#8338ec", "#ffffff"];
-  const SPIN_DURATION_MS = 4000;
+  const STORAGE_KEY = "roulette-state-v1";
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+  // The original fixed spin was 1800 degrees over 4 seconds.
+  const BASE_DEG_PER_SEC = 450;
+
+  const SLICE_RED = "#b41f2b";
+  const SLICE_BLACK = "#17171b";
+  const SLICE_GREEN = "#0e7a45";
+  const CONFETTI_COLORS = ["#ff5470", "#ffd166", "#06d6a0", "#118ab2", "#8338ec", "#c9a227", "#ffffff"];
 
   const canvas = document.getElementById("wheel");
   const ctx = canvas.getContext("2d");
   const confettiCanvas = document.getElementById("confetti-canvas");
   const confettiCtx = confettiCanvas.getContext("2d");
 
+  const titleEl = document.getElementById("board-title");
+  const subtitleEl = document.getElementById("board-subtitle");
   const categoryBoard = document.getElementById("category-board");
   const wheelItemList = document.getElementById("wheel-item-list");
   const spinBtn = document.getElementById("spin-btn");
   const result = document.getElementById("result");
   const muteBtn = document.getElementById("mute-btn");
   const volumeSlider = document.getElementById("volume-slider");
+  const resetWinsBtn = document.getElementById("reset-wins-btn");
+  const restoreWinsBtn = document.getElementById("restore-wins-btn");
 
   const confirmDialog = document.getElementById("confirm-dialog");
   const confirmMessage = document.getElementById("confirm-message");
@@ -25,25 +36,33 @@
     return `${prefix}-${nextId++}`;
   }
 
-  let categories = [
-    {
-      id: makeId("cat"),
-      name: "사업팀",
-      items: [
-        { id: makeId("item"), name: "김사원", included: true },
-        { id: makeId("item"), name: "하대리", included: true },
-      ],
-    },
-    {
-      id: makeId("cat"),
-      name: "홍보팀",
-      items: [
-        { id: makeId("item"), name: "박팀장", included: true },
-        { id: makeId("item"), name: "이주임", included: true },
-      ],
-    },
-  ];
+  function createSeedCategories() {
+    return [
+      {
+        id: makeId("cat"),
+        name: "사업팀",
+        items: [
+          { id: makeId("item"), name: "김사원", included: true, wins: [] },
+          { id: makeId("item"), name: "하대리", included: true, wins: [] },
+        ],
+      },
+      {
+        id: makeId("cat"),
+        name: "홍보팀",
+        items: [
+          { id: makeId("item"), name: "박팀장", included: true, wins: [] },
+          { id: makeId("item"), name: "이주임", included: true, wins: [] },
+        ],
+      },
+    ];
+  }
 
+  let categories = [];
+  let boardTitle = "룰렛";
+  let boardSubtitle = "카테고리를 넘나들며 항목을 골라 하나의 룰렛으로 돌려보세요.";
+  let winsBackup = null;
+
+  let editingHeaderField = null;
   let editingCategoryId = null;
   let addingCategory = false;
   let editingItemId = null;
@@ -51,6 +70,77 @@
   let rotation = 0;
   let spinning = false;
   let confettiAnimationId = null;
+
+  // ---------- Persistence ----------
+  function saveState() {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          title: boardTitle,
+          subtitle: boardSubtitle,
+          categories,
+          winsBackup,
+          nextId,
+          volume: masterVolume,
+          muted,
+        })
+      );
+    } catch (e) {
+      // Storage can be unavailable (private mode, quota); the app still
+      // works for the current session without it.
+    }
+  }
+
+  function loadState() {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      return false;
+    }
+    if (!raw) return false;
+
+    try {
+      const data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.categories)) return false;
+
+      categories = data.categories.map((category) => ({
+        id: String(category.id),
+        name: String(category.name),
+        items: Array.isArray(category.items)
+          ? category.items.map((item) => ({
+              id: String(item.id),
+              name: String(item.name),
+              included: item.included !== false,
+              wins: Array.isArray(item.wins) ? item.wins.filter((t) => typeof t === "number") : [],
+            }))
+          : [],
+      }));
+
+      if (typeof data.title === "string" && data.title.trim()) boardTitle = data.title;
+      if (typeof data.subtitle === "string" && data.subtitle.trim()) boardSubtitle = data.subtitle;
+      winsBackup = data.winsBackup && typeof data.winsBackup === "object" ? data.winsBackup : null;
+      if (typeof data.volume === "number") masterVolume = Math.min(1, Math.max(0, data.volume));
+      muted = data.muted === true;
+      if (Number.isFinite(data.nextId)) nextId = data.nextId;
+
+      // Guard against id collisions if the stored counter drifted.
+      let highest = nextId - 1;
+      categories.forEach((category) => {
+        [category, ...category.items].forEach((entity) => {
+          const match = /-(\d+)$/.exec(entity.id);
+          if (match) highest = Math.max(highest, Number(match[1]));
+        });
+      });
+      nextId = highest + 1;
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   // ---------- Audio ----------
   let audioCtx = null;
@@ -139,9 +229,7 @@
   }
 
   // Evaluates a CSS-style cubic-bezier(p1x,p1y,p2x,p2y) easing at time
-  // fraction t, via binary search over the bezier's parametric variable
-  // (fast/simple enough for scheduling a few dozen ticks, no need for
-  // Newton-Raphson precision).
+  // fraction t, via binary search over the bezier's parametric variable.
   function makeCubicBezierEasing(p1x, p1y, p2x, p2y) {
     function sampleX(u) {
       const mu = 1 - u;
@@ -186,21 +274,21 @@
   // pointer while the wheel rotates from startRotation to endRotation,
   // timed to match the CSS transition's easing so the "roulette ticking"
   // sound speeds up and slows down together with the visual spin.
-  function scheduleSpinTicks(startRotation, endRotation, sliceAngle) {
+  function scheduleSpinTicks(startRotation, endRotation, sliceAngle, durationMs) {
     if (!audioCtx) return;
     const pointerAngle = 270;
     const totalDelta = endRotation - startRotation;
     if (totalDelta <= 0) return;
 
     const phase = ((pointerAngle % sliceAngle) + sliceAngle) % sliceAngle;
-    let firstBoundary = startRotation + (((phase - startRotation) % sliceAngle) + sliceAngle) % sliceAngle;
+    let firstBoundary = startRotation + ((((phase - startRotation) % sliceAngle) + sliceAngle) % sliceAngle);
     if (firstBoundary <= startRotation) firstBoundary += sliceAngle;
 
     const baseTime = audioCtx.currentTime;
     for (let r = firstBoundary; r <= endRotation; r += sliceAngle) {
       const progress = (r - startRotation) / totalDelta;
       const timeFraction = findTimeFractionForProgress(progress);
-      scheduleTick(baseTime + (timeFraction * SPIN_DURATION_MS) / 1000);
+      scheduleTick(baseTime + (timeFraction * durationMs) / 1000);
     }
   }
 
@@ -209,18 +297,22 @@
     muted = !muted;
     applyVolume();
     playClick();
+    saveState();
   });
 
   volumeSlider.addEventListener("input", () => {
     masterVolume = Number(volumeSlider.value) / 100;
     if (masterVolume > 0) muted = false;
     applyVolume();
+    saveState();
   });
 
   // ---------- Confirm dialog ----------
-  function showConfirm(message) {
+  function showConfirm(message, confirmLabel, danger) {
     return new Promise((resolve) => {
       confirmMessage.textContent = message;
+      confirmOkBtn.textContent = confirmLabel || "제거";
+      confirmOkBtn.className = danger === false ? "primary" : "danger";
       confirmDialog.hidden = false;
 
       function onKeydown(e) {
@@ -254,10 +346,11 @@
     });
   }
 
+  // ---------- Derived data ----------
   // The wheel spins over items marked "included", regardless of which
   // category they belong to, so a single roulette can mix e.g. 사업팀's
   // 김사원 with 홍보팀's 박팀장. Each entry keeps a reference to the real
-  // item object (not a copy) so callers can mutate `included` back.
+  // item object (not a copy) so callers can mutate it.
   function getWheelEntries() {
     const entries = [];
     categories.forEach((category) => {
@@ -273,53 +366,232 @@
     array.splice(toIndex, 0, moved);
   }
 
-  function renderAll() {
-    renderCategoryBoard();
-    renderWheelItems();
-    drawWheel();
+  function formatWinStats(item) {
+    const now = Date.now();
+    const week = item.wins.filter((t) => now - t <= WEEK_MS).length;
+    const month = item.wins.filter((t) => now - t <= MONTH_MS).length;
+    return `최근 일주일/한달 내 당첨 횟수 : ${week}회/${month}회`;
   }
 
-  // ---------- Wheel ----------
+  function renderAll() {
+    renderHeader();
+    renderCategoryBoard();
+    renderWheelItems();
+    renderTopActions();
+    drawWheel();
+    saveState();
+  }
+
+  // ---------- Editable heading ----------
+  function renderEditableHeading(container, value, field, maxLength, apply) {
+    container.innerHTML = "";
+
+    if (editingHeaderField === field) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "edit-input";
+      input.value = value;
+      input.maxLength = maxLength;
+      container.appendChild(input);
+
+      // An inline editor commits on both Enter and blur, and committing
+      // re-renders (which removes the focused input and fires blur again),
+      // so every commit path is guarded against running twice.
+      let done = false;
+      const commit = () => {
+        if (done) return;
+        done = true;
+        const next = input.value.trim();
+        if (next) apply(next);
+        editingHeaderField = null;
+        renderAll();
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") {
+          done = true;
+          editingHeaderField = null;
+          renderHeader();
+        }
+      });
+      input.addEventListener("blur", commit);
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+      return;
+    }
+
+    const span = document.createElement("span");
+    span.textContent = value;
+    container.appendChild(span);
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "icon-btn";
+    editBtn.textContent = "✎";
+    editBtn.disabled = spinning;
+    editBtn.setAttribute("aria-label", `${field === "title" ? "제목" : "부제목"} 수정`);
+    editBtn.addEventListener("click", () => {
+      playClick();
+      editingHeaderField = field;
+      renderHeader();
+    });
+    container.appendChild(editBtn);
+  }
+
+  function renderHeader() {
+    renderEditableHeading(titleEl, boardTitle, "title", 30, (value) => {
+      boardTitle = value;
+    });
+    renderEditableHeading(subtitleEl, boardSubtitle, "subtitle", 80, (value) => {
+      boardSubtitle = value;
+    });
+  }
+
+  function renderTopActions() {
+    resetWinsBtn.disabled = spinning;
+    restoreWinsBtn.disabled = spinning || !winsBackup;
+  }
+
+  // ---------- Wheel drawing ----------
+  function drawHub(center, radius) {
+    const hubGradient = ctx.createLinearGradient(
+      center - radius,
+      center - radius,
+      center + radius,
+      center + radius
+    );
+    hubGradient.addColorStop(0, "#f6e9bd");
+    hubGradient.addColorStop(0.5, "#b8912b");
+    hubGradient.addColorStop(1, "#7d6115");
+
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, Math.PI * 2);
+    ctx.fillStyle = hubGradient;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(center, center, radius * 0.45, 0, Math.PI * 2);
+    ctx.fillStyle = "#2a2a2e";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(center - radius * 0.3, center - radius * 0.32, radius * 0.18, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.fill();
+  }
+
   function drawWheel() {
     const entries = getWheelEntries();
     const size = canvas.width;
     const center = size / 2;
-    const radius = center - 4;
+    const faceRadius = center - 6;
+    const hubRadius = Math.max(24, faceRadius * 0.17);
+
     ctx.clearRect(0, 0, size, size);
+
+    // Dark backing ring so slice edges read against the gold bowl.
+    ctx.beginPath();
+    ctx.arc(center, center, center - 1, 0, Math.PI * 2);
+    ctx.fillStyle = "#0d0d10";
+    ctx.fill();
 
     if (entries.length === 0) {
       ctx.beginPath();
-      ctx.arc(center, center, radius, 0, Math.PI * 2);
-      ctx.fillStyle = "#ddd";
+      ctx.arc(center, center, faceRadius, 0, Math.PI * 2);
+      ctx.fillStyle = "#2b2b30";
       ctx.fill();
+      drawHub(center, hubRadius);
       return;
     }
 
     const sliceAngle = (Math.PI * 2) / entries.length;
+    // A real wheel alternates red and black; with an odd number of
+    // pockets the first one becomes the green "zero" so no two
+    // neighbouring slices share a colour.
+    const useGreenZero = entries.length % 2 === 1;
+    const fontSize = Math.max(10, Math.min(16, Math.round(140 / entries.length) + 9));
+
     entries.forEach((entry, i) => {
       const start = i * sliceAngle;
       const end = start + sliceAngle;
 
       ctx.beginPath();
       ctx.moveTo(center, center);
-      ctx.arc(center, center, radius, start, end);
+      ctx.arc(center, center, faceRadius, start, end);
       ctx.closePath();
-      ctx.fillStyle = COLORS[i % COLORS.length];
+      if (useGreenZero && i === 0) ctx.fillStyle = SLICE_GREEN;
+      else ctx.fillStyle = i % 2 === 0 ? SLICE_RED : SLICE_BLACK;
       ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(center, center);
+      ctx.lineTo(center + Math.cos(start) * faceRadius, center + Math.sin(start) * faceRadius);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
 
       ctx.save();
       ctx.translate(center, center);
       ctx.rotate(start + sliceAngle / 2);
       ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 16px system-ui, sans-serif";
-      ctx.fillText(entry.item.name, radius - 12, 6);
+      ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+      ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+      ctx.shadowBlur = 3;
+      ctx.fillText(entry.item.name, faceRadius - 18, 0);
       ctx.restore();
     });
+
+    // Depth shading towards the outer edge.
+    const shade = ctx.createRadialGradient(
+      center,
+      center,
+      faceRadius * 0.25,
+      center,
+      center,
+      faceRadius
+    );
+    shade.addColorStop(0, "rgba(0, 0, 0, 0)");
+    shade.addColorStop(0.8, "rgba(0, 0, 0, 0.1)");
+    shade.addColorStop(1, "rgba(0, 0, 0, 0.45)");
+    ctx.beginPath();
+    ctx.arc(center, center, faceRadius, 0, Math.PI * 2);
+    ctx.fillStyle = shade;
+    ctx.fill();
+
+    // Metal frets between pockets.
+    entries.forEach((_, i) => {
+      const angle = i * sliceAngle;
+      const px = center + Math.cos(angle) * (faceRadius - 3);
+      const py = center + Math.sin(angle) * (faceRadius - 3);
+      const pinGradient = ctx.createRadialGradient(px - 1, py - 1, 0.5, px, py, 3.5);
+      pinGradient.addColorStop(0, "#ffffff");
+      pinGradient.addColorStop(1, "#8d8d93");
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = pinGradient;
+      ctx.fill();
+    });
+
+    // Inner gold ring around the hub.
+    ctx.beginPath();
+    ctx.arc(center, center, hubRadius + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(201, 162, 39, 0.9)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    drawHub(center, hubRadius);
   }
 
   // ---------- Category board ----------
   function renderCategoryBoard() {
+    const scrollLeft = categoryBoard.scrollLeft;
     categoryBoard.innerHTML = "";
 
     categories.forEach((category, categoryIndex) => {
@@ -344,7 +616,10 @@
         editInput.maxLength = 20;
         header.appendChild(editInput);
 
+        let done = false;
         const commit = () => {
+          if (done) return;
+          done = true;
           const value = editInput.value.trim();
           if (value) category.name = value;
           editingCategoryId = null;
@@ -353,6 +628,7 @@
         editInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter") commit();
           if (e.key === "Escape") {
+            done = true;
             editingCategoryId = null;
             renderCategoryBoard();
           }
@@ -391,7 +667,9 @@
       removeBtn.setAttribute("aria-label", `${category.name} 삭제`);
       removeBtn.addEventListener("click", async () => {
         playClick();
-        const ok = await showConfirm(`"${category.name}" 카테고리와 그 안의 모든 항목을 정말 제거하시겠습니까?`);
+        const ok = await showConfirm(
+          `"${category.name}" 카테고리와 그 안의 모든 항목을 정말 제거하시겠습니까?`
+        );
         if (!ok) return;
         const idx = categories.indexOf(category);
         if (idx !== -1) categories.splice(idx, 1);
@@ -409,11 +687,14 @@
         li.className = "item-row";
         li.draggable = !spinning && editingItemId !== item.id;
 
+        const main = document.createElement("div");
+        main.className = "item-main";
+
         const itemHandle = document.createElement("span");
         itemHandle.className = "drag-handle";
         itemHandle.textContent = "⋮⋮";
         itemHandle.setAttribute("aria-hidden", "true");
-        li.appendChild(itemHandle);
+        main.appendChild(itemHandle);
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
@@ -426,8 +707,9 @@
           item.included = checkbox.checked;
           renderWheelItems();
           drawWheel();
+          saveState();
         });
-        li.appendChild(checkbox);
+        main.appendChild(checkbox);
 
         if (editingItemId === item.id) {
           const editInput = document.createElement("input");
@@ -435,19 +717,21 @@
           editInput.className = "edit-input";
           editInput.value = item.name;
           editInput.maxLength = 30;
-          li.appendChild(editInput);
+          main.appendChild(editInput);
 
+          let done = false;
           const commit = () => {
+            if (done) return;
+            done = true;
             const value = editInput.value.trim();
             if (value) item.name = value;
             editingItemId = null;
-            renderCategoryBoard();
-            renderWheelItems();
-            drawWheel();
+            renderAll();
           };
           editInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") commit();
             if (e.key === "Escape") {
+              done = true;
               editingItemId = null;
               renderCategoryBoard();
             }
@@ -462,7 +746,7 @@
           span.className = "item-name";
           span.textContent = item.name;
           span.title = item.name;
-          li.appendChild(span);
+          main.appendChild(span);
 
           const editBtn = document.createElement("button");
           editBtn.type = "button";
@@ -475,7 +759,7 @@
             editingItemId = item.id;
             renderCategoryBoard();
           });
-          li.appendChild(editBtn);
+          main.appendChild(editBtn);
         }
 
         const removeItemBtn = document.createElement("button");
@@ -490,11 +774,16 @@
           if (!ok) return;
           const idx = category.items.indexOf(item);
           if (idx !== -1) category.items.splice(idx, 1);
-          renderCategoryBoard();
-          renderWheelItems();
-          drawWheel();
+          renderAll();
         });
-        li.appendChild(removeItemBtn);
+        main.appendChild(removeItemBtn);
+
+        li.appendChild(main);
+
+        const stats = document.createElement("div");
+        stats.className = "item-stats";
+        stats.textContent = formatWinStats(item);
+        li.appendChild(stats);
 
         li.addEventListener("dragstart", (e) => {
           e.stopPropagation();
@@ -516,9 +805,7 @@
           const fromIndex = Number(e.dataTransfer.getData("text/plain"));
           if (Number.isNaN(fromIndex) || fromIndex === itemIndex) return;
           reorder(category.items, fromIndex, itemIndex);
-          renderCategoryBoard();
-          renderWheelItems();
-          drawWheel();
+          renderAll();
         });
 
         itemsList.appendChild(li);
@@ -547,11 +834,9 @@
         const value = addItemInput.value.trim();
         if (!value) return;
         playClick();
-        category.items.push({ id: makeId("item"), name: value, included: true });
+        category.items.push({ id: makeId("item"), name: value, included: true, wins: [] });
         addItemInput.value = "";
-        renderCategoryBoard();
-        renderWheelItems();
-        drawWheel();
+        renderAll();
       });
 
       column.appendChild(addItemForm);
@@ -576,7 +861,7 @@
         const fromIndex = Number(raw);
         if (Number.isNaN(fromIndex) || fromIndex === categoryIndex) return;
         reorder(categories, fromIndex, categoryIndex);
-        renderCategoryBoard();
+        renderAll();
       });
 
       categoryBoard.appendChild(column);
@@ -593,7 +878,10 @@
       addInput.maxLength = 20;
       addColumn.appendChild(addInput);
 
+      let done = false;
       const commitAdd = () => {
+        if (done) return;
+        done = true;
         const value = addInput.value.trim();
         if (value) {
           playClick();
@@ -605,6 +893,7 @@
       addInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") commitAdd();
         if (e.key === "Escape") {
+          done = true;
           addingCategory = false;
           renderCategoryBoard();
         }
@@ -626,6 +915,7 @@
     }
 
     categoryBoard.appendChild(addColumn);
+    categoryBoard.scrollLeft = scrollLeft;
   }
 
   // ---------- Wheel items panel (cross-category selection) ----------
@@ -672,6 +962,40 @@
 
     spinBtn.disabled = entries.length < 2 || spinning;
   }
+
+  // ---------- Win history ----------
+  resetWinsBtn.addEventListener("click", async () => {
+    playClick();
+    const ok = await showConfirm("정말 초기화 하시겠습니까?", "초기화", true);
+    if (!ok) return;
+    const backup = {};
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        backup[item.id] = item.wins.slice();
+      });
+    });
+    winsBackup = backup;
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        item.wins = [];
+      });
+    });
+    renderAll();
+  });
+
+  restoreWinsBtn.addEventListener("click", async () => {
+    if (!winsBackup) return;
+    playClick();
+    const ok = await showConfirm("정말 복구하시겠습니까?", "복구", false);
+    if (!ok) return;
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (Array.isArray(winsBackup[item.id])) item.wins = winsBackup[item.id].slice();
+      });
+    });
+    winsBackup = null;
+    renderAll();
+  });
 
   // ---------- Confetti ----------
   function resizeConfettiCanvas() {
@@ -734,41 +1058,52 @@
     const entries = getWheelEntries();
     if (spinning || entries.length < 2) return;
     spinning = true;
-    result.textContent = "";
+    result.textContent = "돌리는 중...";
     result.classList.remove("celebrate");
-    renderCategoryBoard();
-    renderWheelItems();
+    result.classList.add("spinning");
+    renderAll();
 
     ensureAudioCtx();
     playClick();
 
+    // Each spin gets its own duration (4-6s) and speed (0.8-1.2x of the
+    // original 450°/s), so no two spins feel identical.
+    const durationMs = (4 + Math.random() * 2) * 1000;
+    const speedFactor = 0.8 + Math.random() * 0.4;
+    const targetDegrees = BASE_DEG_PER_SEC * speedFactor * (durationMs / 1000);
+    const extraSpins = Math.max(1, Math.round(targetDegrees / 360)) * 360;
+
     const winnerIndex = Roulette.pickWinnerIndex(entries.length);
     const sliceAngle = 360 / entries.length;
     const targetSliceCenter = winnerIndex * sliceAngle + sliceAngle / 2;
-    const extraSpins = 5 * 360;
     // Slices are drawn starting from canvas angle 0 (east) going clockwise,
     // but the pointer is fixed at the top of the wheel, which is canvas
     // angle 270 (north). Rotate so the winning slice's center lands there.
     const pointerAngle = 270;
     const currentOffset = rotation % 360;
-    const neededOffset = ((pointerAngle - targetSliceCenter) % 360 + 360) % 360;
+    const neededOffset = (((pointerAngle - targetSliceCenter) % 360) + 360) % 360;
     const startRotation = rotation;
     const finalRotation = rotation - currentOffset + extraSpins + neededOffset;
 
-    scheduleSpinTicks(startRotation, finalRotation, sliceAngle);
-
     rotation = finalRotation;
+    canvas.style.transitionDuration = `${durationMs / 1000}s`;
     canvas.style.transform = `rotate(${rotation}deg)`;
+
+    scheduleSpinTicks(startRotation, finalRotation, sliceAngle, durationMs);
 
     canvas.addEventListener(
       "transitionend",
       () => {
         spinning = false;
-        renderCategoryBoard();
-        renderWheelItems();
         const winner = entries[winnerIndex];
+        const now = Date.now();
+        winner.item.wins = winner.item.wins.filter((t) => now - t <= MONTH_MS);
+        winner.item.wins.push(now);
+
         result.textContent = `결과: ${winner.categoryName} ${winner.item.name}`;
+        result.classList.remove("spinning");
         result.classList.add("celebrate");
+        renderAll();
         launchConfetti();
         playFanfare();
       },
@@ -776,6 +1111,9 @@
     );
   });
 
+  // ---------- Init ----------
+  if (!loadState()) categories = createSeedCategories();
+  volumeSlider.value = String(Math.round(masterVolume * 100));
   applyVolume();
   renderAll();
 })();
