@@ -5,10 +5,8 @@
   // The original fixed spin was 1800 degrees over 4 seconds.
   const BASE_DEG_PER_SEC = 450;
 
-  const SLICE_RED = "#b41f2b";
-  const SLICE_BLACK = "#17171b";
-  const SLICE_GREEN = "#0e7a45";
-  const CONFETTI_COLORS = ["#ff5470", "#ffd166", "#06d6a0", "#118ab2", "#8338ec", "#c9a227", "#ffffff"];
+  const SLICE_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5"];
+  const CONFETTI_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5", "#ffffff"];
 
   const canvas = document.getElementById("wheel");
   const ctx = canvas.getContext("2d");
@@ -366,6 +364,42 @@
     array.splice(toIndex, 0, moved);
   }
 
+  // Native HTML5 drag-and-drop (used for the ⋮⋮ handles) has no touch
+  // equivalent on phones, so these buttons give touch and keyboard users
+  // a working way to reorder categories/items too.
+  function createReorderButtons(array, index, symbols, ariaLabelPrefix, onReordered) {
+    const wrap = document.createElement("span");
+    wrap.className = "reorder-buttons";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "icon-btn reorder-btn";
+    prevBtn.textContent = symbols[0];
+    prevBtn.disabled = spinning || index === 0;
+    prevBtn.setAttribute("aria-label", `${ariaLabelPrefix} 앞으로 이동`);
+    prevBtn.addEventListener("click", () => {
+      playClick();
+      reorder(array, index, index - 1);
+      onReordered();
+    });
+    wrap.appendChild(prevBtn);
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "icon-btn reorder-btn";
+    nextBtn.textContent = symbols[1];
+    nextBtn.disabled = spinning || index === array.length - 1;
+    nextBtn.setAttribute("aria-label", `${ariaLabelPrefix} 뒤로 이동`);
+    nextBtn.addEventListener("click", () => {
+      playClick();
+      reorder(array, index, index + 1);
+      onReordered();
+    });
+    wrap.appendChild(nextBtn);
+
+    return wrap;
+  }
+
   function formatWinStats(item) {
     const now = Date.now();
     const week = item.wins.filter((t) => now - t <= WEEK_MS).length;
@@ -458,15 +492,15 @@
   function drawHub(center, radius) {
     ctx.beginPath();
     ctx.arc(center, center, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#b8912b";
+    ctx.fillStyle = "#fffaf3";
     ctx.fill();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
     ctx.stroke();
 
     ctx.beginPath();
     ctx.arc(center, center, radius * 0.45, 0, Math.PI * 2);
-    ctx.fillStyle = "#2a2a2e";
+    ctx.fillStyle = "#c9a8f5";
     ctx.fill();
   }
 
@@ -479,26 +513,22 @@
 
     ctx.clearRect(0, 0, size, size);
 
-    // Dark backing ring so slice edges read against the gold bowl.
+    // White backing ring so pastel slice edges stay crisp against the rim.
     ctx.beginPath();
     ctx.arc(center, center, center - 1, 0, Math.PI * 2);
-    ctx.fillStyle = "#0d0d10";
+    ctx.fillStyle = "#ffffff";
     ctx.fill();
 
     if (entries.length === 0) {
       ctx.beginPath();
       ctx.arc(center, center, faceRadius, 0, Math.PI * 2);
-      ctx.fillStyle = "#2b2b30";
+      ctx.fillStyle = "#eae7f2";
       ctx.fill();
       drawHub(center, hubRadius);
       return;
     }
 
     const sliceAngle = (Math.PI * 2) / entries.length;
-    // A real wheel alternates red and black; with an odd number of
-    // pockets the first one becomes the green "zero" so no two
-    // neighbouring slices share a colour.
-    const useGreenZero = entries.length % 2 === 1;
     const fontSize = Math.max(10, Math.min(16, Math.round(140 / entries.length) + 9));
 
     entries.forEach((entry, i) => {
@@ -509,15 +539,14 @@
       ctx.moveTo(center, center);
       ctx.arc(center, center, faceRadius, start, end);
       ctx.closePath();
-      if (useGreenZero && i === 0) ctx.fillStyle = SLICE_GREEN;
-      else ctx.fillStyle = i % 2 === 0 ? SLICE_RED : SLICE_BLACK;
+      ctx.fillStyle = SLICE_COLORS[i % SLICE_COLORS.length];
       ctx.fill();
 
       ctx.beginPath();
       ctx.moveTo(center, center);
       ctx.lineTo(center + Math.cos(start) * faceRadius, center + Math.sin(start) * faceRadius);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
       ctx.stroke();
 
       ctx.save();
@@ -525,29 +554,33 @@
       ctx.rotate(start + sliceAngle / 2);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "#fff";
       ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
-      ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
-      ctx.shadowBlur = 3;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.strokeText(entry.item.name, faceRadius - 18, 0);
+      ctx.fillStyle = "#3a2f45";
       ctx.fillText(entry.item.name, faceRadius - 18, 0);
       ctx.restore();
     });
 
-    // Metal frets between pockets.
+    // Frets between pockets.
     entries.forEach((_, i) => {
       const angle = i * sliceAngle;
       const px = center + Math.cos(angle) * (faceRadius - 3);
       const py = center + Math.sin(angle) * (faceRadius - 3);
       ctx.beginPath();
       ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = "#c7c7cd";
+      ctx.fillStyle = "#ffffff";
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
       ctx.fill();
+      ctx.stroke();
     });
 
-    // Inner gold ring around the hub.
+    // Inner ring around the hub.
     ctx.beginPath();
     ctx.arc(center, center, hubRadius + 6, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(201, 162, 39, 0.9)";
+    ctx.strokeStyle = "rgba(255, 84, 112, 0.8)";
     ctx.lineWidth = 3;
     ctx.stroke();
 
@@ -572,6 +605,9 @@
       handle.textContent = "⋮⋮";
       handle.setAttribute("aria-hidden", "true");
       header.appendChild(handle);
+      header.appendChild(
+        createReorderButtons(categories, categoryIndex, ["◀", "▶"], category.name, renderAll)
+      );
 
       if (editingCategoryId === category.id) {
         const editInput = document.createElement("input");
@@ -660,6 +696,7 @@
         itemHandle.textContent = "⋮⋮";
         itemHandle.setAttribute("aria-hidden", "true");
         main.appendChild(itemHandle);
+        main.appendChild(createReorderButtons(category.items, itemIndex, ["▲", "▼"], item.name, renderAll));
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
