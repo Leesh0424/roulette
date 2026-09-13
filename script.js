@@ -23,6 +23,9 @@
   const volumeSlider = document.getElementById("volume-slider");
   const resetWinsBtn = document.getElementById("reset-wins-btn");
   const restoreWinsBtn = document.getElementById("restore-wins-btn");
+  const exportBtn = document.getElementById("export-btn");
+  const importBtn = document.getElementById("import-btn");
+  const importFileInput = document.getElementById("import-file-input");
 
   const confirmDialog = document.getElementById("confirm-dialog");
   const confirmMessage = document.getElementById("confirm-message");
@@ -70,21 +73,60 @@
   let confettiAnimationId = null;
 
   // ---------- Persistence ----------
+  function serializeState() {
+    return {
+      version: 1,
+      title: boardTitle,
+      subtitle: boardSubtitle,
+      categories,
+      winsBackup,
+      nextId,
+      volume: masterVolume,
+      muted,
+    };
+  }
+
+  // Shared by loadState() (localStorage) and importState() (a file the
+  // user picked), so both go through the same validation/normalization.
+  function applyStateData(data) {
+    if (!data || !Array.isArray(data.categories)) return false;
+
+    categories = data.categories.map((category) => ({
+      id: String(category.id),
+      name: String(category.name),
+      items: Array.isArray(category.items)
+        ? category.items.map((item) => ({
+            id: String(item.id),
+            name: String(item.name),
+            included: item.included !== false,
+            wins: Array.isArray(item.wins) ? item.wins.filter((t) => typeof t === "number") : [],
+          }))
+        : [],
+    }));
+
+    if (typeof data.title === "string" && data.title.trim()) boardTitle = data.title;
+    if (typeof data.subtitle === "string" && data.subtitle.trim()) boardSubtitle = data.subtitle;
+    winsBackup = data.winsBackup && typeof data.winsBackup === "object" ? data.winsBackup : null;
+    if (typeof data.volume === "number") masterVolume = Math.min(1, Math.max(0, data.volume));
+    muted = data.muted === true;
+    if (Number.isFinite(data.nextId)) nextId = data.nextId;
+
+    // Guard against id collisions if the stored/imported counter drifted.
+    let highest = nextId - 1;
+    categories.forEach((category) => {
+      [category, ...category.items].forEach((entity) => {
+        const match = /-(\d+)$/.exec(entity.id);
+        if (match) highest = Math.max(highest, Number(match[1]));
+      });
+    });
+    nextId = highest + 1;
+
+    return true;
+  }
+
   function saveState() {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          version: 1,
-          title: boardTitle,
-          subtitle: boardSubtitle,
-          categories,
-          winsBackup,
-          nextId,
-          volume: masterVolume,
-          muted,
-        })
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState()));
     } catch (e) {
       // Storage can be unavailable (private mode, quota); the app still
       // works for the current session without it.
@@ -101,43 +143,57 @@
     if (!raw) return false;
 
     try {
-      const data = JSON.parse(raw);
-      if (!data || !Array.isArray(data.categories)) return false;
-
-      categories = data.categories.map((category) => ({
-        id: String(category.id),
-        name: String(category.name),
-        items: Array.isArray(category.items)
-          ? category.items.map((item) => ({
-              id: String(item.id),
-              name: String(item.name),
-              included: item.included !== false,
-              wins: Array.isArray(item.wins) ? item.wins.filter((t) => typeof t === "number") : [],
-            }))
-          : [],
-      }));
-
-      if (typeof data.title === "string" && data.title.trim()) boardTitle = data.title;
-      if (typeof data.subtitle === "string" && data.subtitle.trim()) boardSubtitle = data.subtitle;
-      winsBackup = data.winsBackup && typeof data.winsBackup === "object" ? data.winsBackup : null;
-      if (typeof data.volume === "number") masterVolume = Math.min(1, Math.max(0, data.volume));
-      muted = data.muted === true;
-      if (Number.isFinite(data.nextId)) nextId = data.nextId;
-
-      // Guard against id collisions if the stored counter drifted.
-      let highest = nextId - 1;
-      categories.forEach((category) => {
-        [category, ...category.items].forEach((entity) => {
-          const match = /-(\d+)$/.exec(entity.id);
-          if (match) highest = Math.max(highest, Number(match[1]));
-        });
-      });
-      nextId = highest + 1;
-
-      return true;
+      return applyStateData(JSON.parse(raw));
     } catch (e) {
       return false;
     }
+  }
+
+  // ---------- Export / import ----------
+  function exportState() {
+    playClick();
+    const blob = new Blob([JSON.stringify(serializeState(), null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `roulette-backup-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importStateFromFile(file) {
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (e) {
+      window.alert("파일을 읽을 수 없습니다. 올바른 백업 파일인지 확인해주세요.");
+      return;
+    }
+    if (!data || !Array.isArray(data.categories)) {
+      window.alert("올바른 백업 파일 형식이 아닙니다.");
+      return;
+    }
+
+    const ok = await showConfirm(
+      "현재 데이터를 가져온 파일 내용으로 덮어씁니다. 계속하시겠습니까?",
+      "가져오기",
+      true
+    );
+    if (!ok) return;
+
+    applyStateData(data);
+    editingHeaderField = null;
+    editingCategoryId = null;
+    addingCategory = false;
+    editingItemId = null;
+    volumeSlider.value = String(Math.round(masterVolume * 100));
+    applyVolume();
+    renderAll();
   }
 
   // ---------- Audio ----------
@@ -964,6 +1020,20 @@
 
     spinBtn.disabled = entries.length < 2 || spinning;
   }
+
+  // ---------- Export / import wiring ----------
+  exportBtn.addEventListener("click", exportState);
+
+  importBtn.addEventListener("click", () => {
+    playClick();
+    importFileInput.click();
+  });
+
+  importFileInput.addEventListener("change", () => {
+    const file = importFileInput.files[0];
+    importFileInput.value = "";
+    if (file) importStateFromFile(file);
+  });
 
   // ---------- Win history ----------
   resetWinsBtn.addEventListener("click", async () => {

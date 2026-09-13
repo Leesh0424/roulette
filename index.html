@@ -11,10 +11,16 @@
     <div class="banner-inner">
       <p id="result" aria-live="polite">룰렛을 돌려보세요</p>
       <div class="top-actions">
-        <button id="reset-wins-btn" type="button">당첨횟수 초기화</button>
-        <button id="restore-wins-btn" type="button">당첨횟수 복구</button>
+        <button id="export-btn" type="button">내보내기</button>
+        <button id="import-btn" type="button">가져오기</button>
+        <input id="import-file-input" type="file" accept="application/json" hidden>
       </div>
     </div>
+  </div>
+
+  <div class="win-actions">
+    <button id="reset-wins-btn" type="button">당첨횟수 초기화</button>
+    <button id="restore-wins-btn" type="button">당첨횟수 복구</button>
   </div>
 
   <main class="app">

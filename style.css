@@ -1,27 +1,18 @@
+/* Always dark: the pastel wheel/accent colors are kept as-is, only the
+   page chrome (background, cards, text) uses a fixed dark palette. */
 :root {
-  color-scheme: light dark;
-  --bg: #f7f7fb;
-  --fg: #1c1c1f;
+  color-scheme: dark;
+  --bg: #000000;
+  --fg: #f2f2f5;
   --accent: #ff5470;
   --danger: #d1264f;
-  --card: #ffffff;
-  --border: #e2e2ea;
-  --rim: #ffe3ec;
-  --banner-bg: #fff0f5;
-  --banner-fg: #3a2036;
+  --card: #1c1c20;
+  --border: #303036;
+  --rim: #4a3a44;
+  --banner-bg: #17070f;
+  --banner-fg: #ffe3ec;
   --banner-border: var(--accent);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16161a;
-    --fg: #f2f2f5;
-    --card: #222228;
-    --border: #33333c;
-    --rim: #4a3a44;
-    --banner-bg: #2c1f2a;
-    --banner-fg: #ffe3ec;
-  }
+  --inset: #131316;
 }
 
 * {
@@ -111,6 +102,33 @@ body {
   filter: brightness(0.97);
 }
 
+/* Pinned to the bottom-left of the viewport, outside the result banner,
+   stacked vertically flush against the left edge. */
+.win-actions {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+}
+
+.win-actions button {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  border-radius: 0;
+  border-left: none;
+}
+
+.win-actions button:first-child {
+  border-top-right-radius: 8px;
+}
+
+.win-actions button:last-child {
+  border-bottom-right-radius: 8px;
+  border-top: none;
+}
+
 /* ---------- Layout ---------- */
 .app {
   width: min(1100px, 96vw);
@@ -195,29 +213,29 @@ h1 {
 /* Pinned to the left-center of the viewport, stacked vertically. */
 .audio-controls {
   position: fixed;
-  left: 16px;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 15;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 10px 6px;
+  gap: 6px;
+  padding: 6px 4px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 999px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 #mute-btn {
-  padding: 8px 10px;
-  font-size: 1.1rem;
+  padding: 5px 6px;
+  font-size: 0.85rem;
 }
 
 #volume-slider {
-  width: 8px;
-  height: 120px;
+  width: 4px;
+  height: 170px;
   writing-mode: vertical-lr;
   direction: rtl;
   -webkit-appearance: slider-vertical;
@@ -236,8 +254,8 @@ h1 {
   }
 
   #volume-slider {
-    width: 110px;
-    height: 8px;
+    width: 90px;
+    height: 5px;
     writing-mode: horizontal-tb;
     direction: ltr;
     -webkit-appearance: none;
@@ -349,7 +367,7 @@ h1 {
   flex-direction: column;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--bg);
+  background: var(--inset);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
@@ -390,7 +408,7 @@ h1 {
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--inset);
   color: var(--fg);
   font-size: 0.9rem;
 }
@@ -451,7 +469,7 @@ h1 {
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--inset);
   color: var(--fg);
   font-size: 0.95rem;
   width: 100%;
