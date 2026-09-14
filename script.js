@@ -16,11 +16,8 @@
   const titleEl = document.getElementById("board-title");
   const subtitleEl = document.getElementById("board-subtitle");
   const categoryBoard = document.getElementById("category-board");
-  const wheelItemList = document.getElementById("wheel-item-list");
   const spinBtn = document.getElementById("spin-btn");
   const result = document.getElementById("result");
-  const muteBtn = document.getElementById("mute-btn");
-  const volumeSlider = document.getElementById("volume-slider");
   const resetWinsBtn = document.getElementById("reset-wins-btn");
   const restoreWinsBtn = document.getElementById("restore-wins-btn");
   const exportBtn = document.getElementById("export-btn");
@@ -191,7 +188,6 @@
     editingCategoryId = null;
     addingCategory = false;
     editingItemId = null;
-    volumeSlider.value = String(Math.round(masterVolume * 100));
     applyVolume();
     renderAll();
   }
@@ -217,7 +213,6 @@
 
   function applyVolume() {
     if (masterGain) masterGain.gain.value = muted ? 0 : masterVolume;
-    muteBtn.textContent = muted || masterVolume === 0 ? "🔇" : "🔊";
   }
 
   function playClick() {
@@ -346,21 +341,6 @@
     }
   }
 
-  muteBtn.addEventListener("click", () => {
-    ensureAudioCtx();
-    muted = !muted;
-    applyVolume();
-    playClick();
-    saveState();
-  });
-
-  volumeSlider.addEventListener("input", () => {
-    masterVolume = Number(volumeSlider.value) / 100;
-    if (masterVolume > 0) muted = false;
-    applyVolume();
-    saveState();
-  });
-
   // ---------- Confirm dialog ----------
   function showConfirm(message, confirmLabel, danger) {
     return new Promise((resolve) => {
@@ -463,10 +443,14 @@
     return `최근 일주일/한달 내 당첨 횟수 : ${week}회/${month}회`;
   }
 
+  function updateSpinAvailability() {
+    spinBtn.disabled = getWheelEntries().length < 2 || spinning;
+  }
+
   function renderAll() {
     renderHeader();
     renderCategoryBoard();
-    renderWheelItems();
+    updateSpinAvailability();
     renderTopActions();
     drawWheel();
     saveState();
@@ -763,7 +747,7 @@
         checkbox.addEventListener("change", () => {
           playClick();
           item.included = checkbox.checked;
-          renderWheelItems();
+          updateSpinAvailability();
           drawWheel();
           saveState();
         });
@@ -976,51 +960,6 @@
     categoryBoard.scrollLeft = scrollLeft;
   }
 
-  // ---------- Wheel items panel (cross-category selection) ----------
-  function renderWheelItems() {
-    wheelItemList.innerHTML = "";
-    const entries = getWheelEntries();
-
-    if (entries.length === 0) {
-      const emptyLi = document.createElement("li");
-      emptyLi.className = "wheel-item-empty";
-      emptyLi.textContent = "포함된 항목이 없습니다. 아래 목록에서 항목의 체크박스를 선택하세요.";
-      wheelItemList.appendChild(emptyLi);
-    } else {
-      entries.forEach((entry) => {
-        const li = document.createElement("li");
-        li.className = "wheel-item-badge";
-
-        const catSpan = document.createElement("span");
-        catSpan.className = "wheel-item-category";
-        catSpan.textContent = entry.categoryName;
-        li.appendChild(catSpan);
-
-        const nameSpan = document.createElement("span");
-        nameSpan.className = "wheel-item-name";
-        nameSpan.textContent = entry.item.name;
-        li.appendChild(nameSpan);
-
-        const removeBtn = document.createElement("button");
-        removeBtn.type = "button";
-        removeBtn.className = "icon-btn";
-        removeBtn.textContent = "✕";
-        removeBtn.disabled = spinning;
-        removeBtn.setAttribute("aria-label", `${entry.categoryName} ${entry.item.name} 룰렛에서 제외`);
-        removeBtn.addEventListener("click", () => {
-          playClick();
-          entry.item.included = false;
-          renderAll();
-        });
-        li.appendChild(removeBtn);
-
-        wheelItemList.appendChild(li);
-      });
-    }
-
-    spinBtn.disabled = entries.length < 2 || spinning;
-  }
-
   // ---------- Export / import wiring ----------
   exportBtn.addEventListener("click", exportState);
 
@@ -1185,7 +1124,6 @@
 
   // ---------- Init ----------
   if (!loadState()) categories = createSeedCategories();
-  volumeSlider.value = String(Math.round(masterVolume * 100));
   applyVolume();
   renderAll();
 })();

@@ -51,8 +51,11 @@ body {
 #result {
   width: 100%;
   margin: 0;
+  /* Clear space for the fixed corner-action stacks on both sides
+     (the right stack's "당첨횟수 초기화" label is the widest button). */
+  padding: 0 100px;
   text-align: center;
-  font-size: clamp(1.3rem, 4vw, 2.4rem);
+  font-size: clamp(1rem, 4vw, 2.4rem);
   font-weight: 800;
   line-height: 1.2;
   color: var(--banner-fg);
@@ -83,49 +86,61 @@ body {
   }
 }
 
-.top-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.top-actions button {
-  padding: 8px 12px;
-  font-size: 0.85rem;
-  background: var(--card);
-  color: var(--banner-fg);
-  border: 1px solid var(--border);
-}
-
-.top-actions button:hover:not(:disabled) {
-  filter: brightness(0.97);
-}
-
-/* Pinned to the bottom-left of the viewport, outside the result banner,
-   stacked vertically flush against the left edge. */
-.win-actions {
+/* Pinned to the top corners of the viewport, outside the result banner,
+   each stacked vertically flush against its edge. */
+.corner-actions {
   position: fixed;
-  left: 0;
-  bottom: 0;
-  z-index: 15;
+  top: 0;
+  z-index: 21;
   display: flex;
   flex-direction: column;
 }
 
-.win-actions button {
+.corner-actions button {
   padding: 6px 10px;
   font-size: 0.75rem;
   border-radius: 0;
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+.corner-actions button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+.corner-actions-left {
+  left: 0;
+}
+
+.corner-actions-left button {
   border-left: none;
 }
 
-.win-actions button:first-child {
+.corner-actions-left button:first-child {
   border-top-right-radius: 8px;
 }
 
-.win-actions button:last-child {
+.corner-actions-left button:last-child {
   border-bottom-right-radius: 8px;
+  border-top: none;
+}
+
+.corner-actions-right {
+  right: 0;
+  align-items: flex-end;
+}
+
+.corner-actions-right button {
+  border-right: none;
+}
+
+.corner-actions-right button:first-child {
+  border-top-left-radius: 8px;
+}
+
+.corner-actions-right button:last-child {
+  border-bottom-left-radius: 8px;
   border-top: none;
 }
 
@@ -208,110 +223,6 @@ h1 {
   justify-content: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-/* Pinned to the left-center of the viewport, stacked vertically. */
-.audio-controls {
-  position: fixed;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 15;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 4px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-}
-
-#mute-btn {
-  padding: 5px 6px;
-  font-size: 0.85rem;
-}
-
-#volume-slider {
-  width: 4px;
-  height: 170px;
-  writing-mode: vertical-lr;
-  direction: rtl;
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-}
-
-/* Below ~640px the wheel spans nearly the full width, so a fixed
-   left-center control would sit on top of it; fall back to an inline
-   horizontal control under the spin button instead. */
-@media (max-width: 640px) {
-  .audio-controls {
-    position: static;
-    transform: none;
-    flex-direction: row;
-    border-radius: 999px;
-    /* Extra breathing room from the fixed win-actions bar at the
-       bottom-left, in case a short viewport lands this row nearby. */
-    margin-left: 16px;
-  }
-
-  #volume-slider {
-    width: 90px;
-    height: 5px;
-    writing-mode: horizontal-tb;
-    direction: ltr;
-    -webkit-appearance: none;
-    appearance: none;
-  }
-}
-
-/* ---------- Wheel items panel (cross-category selection) ---------- */
-.wheel-items-panel {
-  max-width: 100%;
-  margin: 0 auto 24px;
-  text-align: center;
-}
-
-.wheel-items-title {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  opacity: 0.7;
-}
-
-.wheel-item-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
-.wheel-item-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-}
-
-.wheel-item-category {
-  font-size: 0.8rem;
-  opacity: 0.6;
-}
-
-.wheel-item-name {
-  font-weight: 600;
-}
-
-.wheel-item-empty {
-  opacity: 0.6;
-  font-size: 0.9rem;
 }
 
 /* ---------- Category board ---------- */
@@ -586,11 +497,10 @@ button.danger {
    phones/tablets specifically, since the buttons below are sized fine
    for a mouse cursor but too small to reliably tap with a finger. */
 @media (pointer: coarse) {
-  /* The fixed win-actions bar sits over the bottom-left corner; keep the
-     last row of scrollable content from ending up permanently hidden
-     underneath it. */
-  .app {
-    padding-bottom: 110px;
+  /* Corner buttons grow below with more padding, so #result needs more
+     clearance too or its text runs under "당첨횟수 초기화". */
+  #result {
+    padding: 0 128px;
   }
 
   .category-column {
@@ -616,24 +526,13 @@ button.danger {
     height: 22px;
   }
 
-  #mute-btn {
-    padding: 8px 10px;
-    font-size: 1rem;
-    min-width: 36px;
-    min-height: 36px;
-  }
-
   .add-item-form button {
     padding: 8px 14px;
     min-height: 36px;
   }
 
-  .win-actions button {
+  .corner-actions button {
     padding: 10px 14px;
     font-size: 0.8rem;
-  }
-
-  .top-actions button {
-    padding: 10px 14px;
   }
 }
