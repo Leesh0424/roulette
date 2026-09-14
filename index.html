@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>룰렛 - 랜덤 선택기</title>
+<title>커피 룰렛</title>
 
 <!-- PWA: lets phones "Add to Home Screen" and open this in a standalone,
      app-like window instead of a browser tab. -->
@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="룰렛">
+<meta name="apple-mobile-web-app-title" content="커피 룰렛">
 <meta name="mobile-web-app-capable" content="yes">
 
 <style>
@@ -491,6 +491,26 @@ button.danger {
   font-weight: 600;
 }
 
+.modal-title {
+  margin: 0 0 16px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.share-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.share-hint {
+  margin: 0 0 16px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  opacity: 0.6;
+}
+
 .modal-actions {
   display: flex;
   gap: 10px;
@@ -605,6 +625,22 @@ button.danger {
     </div>
   </div>
 
+  <div id="share-dialog" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <p id="share-title" class="modal-title">내보내기 / 공유</p>
+      <div class="share-actions">
+        <button id="share-file-btn" type="button">정보 파일 내보내기 (.json)</button>
+        <button id="share-instagram-btn" type="button">인스타그램 공유</button>
+        <button id="share-discord-btn" type="button">디스코드 공유</button>
+        <button id="share-copy-btn" type="button">결과 텍스트 복사</button>
+      </div>
+      <p id="share-hint" class="share-hint"></p>
+      <div class="modal-actions">
+        <button id="share-close-btn" type="button">닫기</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Winner-picking logic. `random` is injectable so it can be tested
     // deterministically; the app itself always calls it with Math.random.
@@ -622,8 +658,9 @@ button.danger {
   <script>
 (function () {
   const STORAGE_KEY = "roulette-state-v1";
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-  const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const WEEK_MS = 7 * DAY_MS;
+  const FOUR_WEEKS_MS = 28 * DAY_MS;
   // The original fixed spin was 1800 degrees over 4 seconds.
   const BASE_DEG_PER_SEC = 450;
 
@@ -650,6 +687,14 @@ button.danger {
   const confirmMessage = document.getElementById("confirm-message");
   const confirmOkBtn = document.getElementById("confirm-ok-btn");
   const confirmCancelBtn = document.getElementById("confirm-cancel-btn");
+
+  const shareDialog = document.getElementById("share-dialog");
+  const shareHint = document.getElementById("share-hint");
+  const shareFileBtn = document.getElementById("share-file-btn");
+  const shareInstagramBtn = document.getElementById("share-instagram-btn");
+  const shareDiscordBtn = document.getElementById("share-discord-btn");
+  const shareCopyBtn = document.getElementById("share-copy-btn");
+  const shareCloseBtn = document.getElementById("share-close-btn");
 
   let nextId = 1;
   function makeId(prefix) {
@@ -678,9 +723,10 @@ button.danger {
   }
 
   let categories = [];
-  let boardTitle = "룰렛";
-  let boardSubtitle = "카테고리를 넘나들며 항목을 골라 하나의 룰렛으로 돌려보세요.";
+  let boardTitle = "커피 룰렛";
+  let boardSubtitle = "오늘 행운의 커피 구매자는?";
   let winsBackup = null;
+  let lastWinner = null;
 
   let editingHeaderField = null;
   let editingCategoryId = null;
@@ -1058,11 +1104,13 @@ button.danger {
     return wrap;
   }
 
+  // Counts are relative to "now", so they shrink on their own as wins age
+  // past the 7-day / 28-day marks.
   function formatWinStats(item) {
     const now = Date.now();
     const week = item.wins.filter((t) => now - t <= WEEK_MS).length;
-    const month = item.wins.filter((t) => now - t <= MONTH_MS).length;
-    return `최근 일주일/한달 내 당첨 횟수 : ${week}회/${month}회`;
+    const fourWeeks = item.wins.filter((t) => now - t <= FOUR_WEEKS_MS).length;
+    return `최근 일주일/한달 내 당첨 횟수 : ${week}회/${fourWeeks}회`;
   }
 
   function updateSpinAvailability() {
@@ -1151,102 +1199,107 @@ button.danger {
   }
 
   // ---------- Wheel drawing ----------
-  function drawHub(center, radius) {
-    ctx.beginPath();
-    ctx.arc(center, center, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#fffaf3";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
-    ctx.stroke();
+  // Sizes are written for a 360px wheel and scaled by `s`, so the same
+  // drawing also renders the larger wheel used in the share image.
+  function paintHub(g, center, radius, s) {
+    g.beginPath();
+    g.arc(center, center, radius, 0, Math.PI * 2);
+    g.fillStyle = "#fffaf3";
+    g.fill();
+    g.lineWidth = 2 * s;
+    g.strokeStyle = "rgba(0, 0, 0, 0.12)";
+    g.stroke();
 
-    ctx.beginPath();
-    ctx.arc(center, center, radius * 0.45, 0, Math.PI * 2);
-    ctx.fillStyle = "#c9a8f5";
-    ctx.fill();
+    g.beginPath();
+    g.arc(center, center, radius * 0.45, 0, Math.PI * 2);
+    g.fillStyle = "#c9a8f5";
+    g.fill();
   }
 
-  function drawWheel() {
-    const entries = getWheelEntries();
-    const size = canvas.width;
+  function paintWheel(g, size, entries) {
+    const s = size / 360;
     const center = size / 2;
-    const faceRadius = center - 6;
-    const hubRadius = Math.max(24, faceRadius * 0.17);
+    const faceRadius = center - 6 * s;
+    const hubRadius = Math.max(24 * s, faceRadius * 0.17);
 
-    ctx.clearRect(0, 0, size, size);
+    g.clearRect(0, 0, size, size);
 
     // White backing ring so pastel slice edges stay crisp against the rim.
-    ctx.beginPath();
-    ctx.arc(center, center, center - 1, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
+    g.beginPath();
+    g.arc(center, center, center - 1 * s, 0, Math.PI * 2);
+    g.fillStyle = "#ffffff";
+    g.fill();
 
     if (entries.length === 0) {
-      ctx.beginPath();
-      ctx.arc(center, center, faceRadius, 0, Math.PI * 2);
-      ctx.fillStyle = "#eae7f2";
-      ctx.fill();
-      drawHub(center, hubRadius);
+      g.beginPath();
+      g.arc(center, center, faceRadius, 0, Math.PI * 2);
+      g.fillStyle = "#eae7f2";
+      g.fill();
+      paintHub(g, center, hubRadius, s);
       return;
     }
 
     const sliceAngle = (Math.PI * 2) / entries.length;
-    const fontSize = Math.max(10, Math.min(16, Math.round(140 / entries.length) + 9));
+    const fontSize = Math.max(10, Math.min(16, Math.round(140 / entries.length) + 9)) * s;
 
     entries.forEach((entry, i) => {
       const start = i * sliceAngle;
       const end = start + sliceAngle;
 
-      ctx.beginPath();
-      ctx.moveTo(center, center);
-      ctx.arc(center, center, faceRadius, start, end);
-      ctx.closePath();
-      ctx.fillStyle = SLICE_COLORS[i % SLICE_COLORS.length];
-      ctx.fill();
+      g.beginPath();
+      g.moveTo(center, center);
+      g.arc(center, center, faceRadius, start, end);
+      g.closePath();
+      g.fillStyle = SLICE_COLORS[i % SLICE_COLORS.length];
+      g.fill();
 
-      ctx.beginPath();
-      ctx.moveTo(center, center);
-      ctx.lineTo(center + Math.cos(start) * faceRadius, center + Math.sin(start) * faceRadius);
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      g.beginPath();
+      g.moveTo(center, center);
+      g.lineTo(center + Math.cos(start) * faceRadius, center + Math.sin(start) * faceRadius);
+      g.strokeStyle = "#ffffff";
+      g.lineWidth = 2 * s;
+      g.stroke();
 
-      ctx.save();
-      ctx.translate(center, center);
-      ctx.rotate(start + sliceAngle / 2);
-      ctx.textAlign = "right";
-      ctx.textBaseline = "middle";
-      ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.strokeText(entry.item.name, faceRadius - 18, 0);
-      ctx.fillStyle = "#3a2f45";
-      ctx.fillText(entry.item.name, faceRadius - 18, 0);
-      ctx.restore();
+      g.save();
+      g.translate(center, center);
+      g.rotate(start + sliceAngle / 2);
+      g.textAlign = "right";
+      g.textBaseline = "middle";
+      g.font = `bold ${fontSize}px system-ui, sans-serif`;
+      g.lineWidth = 3 * s;
+      g.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      g.strokeText(entry.item.name, faceRadius - 18 * s, 0);
+      g.fillStyle = "#3a2f45";
+      g.fillText(entry.item.name, faceRadius - 18 * s, 0);
+      g.restore();
     });
 
     // Frets between pockets.
     entries.forEach((_, i) => {
       const angle = i * sliceAngle;
-      const px = center + Math.cos(angle) * (faceRadius - 3);
-      const py = center + Math.sin(angle) * (faceRadius - 3);
-      ctx.beginPath();
-      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = "#ffffff";
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
-      ctx.fill();
-      ctx.stroke();
+      const px = center + Math.cos(angle) * (faceRadius - 3 * s);
+      const py = center + Math.sin(angle) * (faceRadius - 3 * s);
+      g.beginPath();
+      g.arc(px, py, 3.5 * s, 0, Math.PI * 2);
+      g.fillStyle = "#ffffff";
+      g.lineWidth = 1 * s;
+      g.strokeStyle = "rgba(0, 0, 0, 0.15)";
+      g.fill();
+      g.stroke();
     });
 
     // Inner ring around the hub.
-    ctx.beginPath();
-    ctx.arc(center, center, hubRadius + 6, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(255, 84, 112, 0.8)";
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    g.beginPath();
+    g.arc(center, center, hubRadius + 6 * s, 0, Math.PI * 2);
+    g.strokeStyle = "rgba(255, 84, 112, 0.8)";
+    g.lineWidth = 3 * s;
+    g.stroke();
 
-    drawHub(center, hubRadius);
+    paintHub(g, center, hubRadius, s);
+  }
+
+  function drawWheel() {
+    paintWheel(ctx, canvas.width, getWheelEntries());
   }
 
   // ---------- Category board ----------
@@ -1582,8 +1635,201 @@ button.danger {
     categoryBoard.scrollLeft = scrollLeft;
   }
 
+  // ---------- Sharing ----------
+  function todayStamp() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  function buildShareText() {
+    if (lastWinner) {
+      return `${boardTitle} ☕\n결과: ${lastWinner.categoryName} ${lastWinner.name}\n${todayStamp()}`;
+    }
+    return `${boardTitle} ☕\n${boardSubtitle}\n${todayStamp()}`;
+  }
+
+  // A square card (Instagram's preferred shape) with the wheel and the
+  // latest result, so there's something to actually post.
+  function buildShareImageBlob() {
+    return new Promise((resolve) => {
+      const size = 1080;
+      const card = document.createElement("canvas");
+      card.width = size;
+      card.height = size;
+      const g = card.getContext("2d");
+
+      g.fillStyle = "#17070f";
+      g.fillRect(0, 0, size, size);
+
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+
+      g.fillStyle = "#ffe3ec";
+      g.font = "bold 68px system-ui, sans-serif";
+      g.fillText(boardTitle, size / 2, 110);
+
+      g.fillStyle = "rgba(255, 227, 236, 0.72)";
+      g.font = "36px system-ui, sans-serif";
+      g.fillText(boardSubtitle, size / 2, 180);
+
+      const wheelSize = 600;
+      const wheelCanvas = document.createElement("canvas");
+      wheelCanvas.width = wheelSize;
+      wheelCanvas.height = wheelSize;
+      paintWheel(wheelCanvas.getContext("2d"), wheelSize, getWheelEntries());
+      g.drawImage(wheelCanvas, (size - wheelSize) / 2, 240);
+
+      if (lastWinner) {
+        g.fillStyle = "#ff5470";
+        g.font = "bold 72px system-ui, sans-serif";
+        g.fillText(`${lastWinner.categoryName} ${lastWinner.name}`, size / 2, 930);
+      } else {
+        g.fillStyle = "rgba(255, 227, 236, 0.72)";
+        g.font = "44px system-ui, sans-serif";
+        g.fillText("아직 결과가 없습니다", size / 2, 930);
+      }
+
+      g.fillStyle = "rgba(255, 227, 236, 0.5)";
+      g.font = "32px system-ui, sans-serif";
+      g.fillText(todayStamp(), size / 2, 1010);
+
+      card.toBlob((blob) => resolve(blob), "image/png");
+    });
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {
+      // Fall through to the textarea fallback below.
+    }
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      return copied;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Built up front (while the dialog opens) so the share call itself can
+  // run straight from the button tap — Safari drops the share permission
+  // if you await anything first.
+  let pendingShareFile = null;
+
+  async function prepareShareFile() {
+    pendingShareFile = null;
+    try {
+      const blob = await buildShareImageBlob();
+      if (!blob) return;
+      pendingShareFile = new File([blob], `coffee-roulette-${todayStamp()}.png`, {
+        type: "image/png",
+      });
+    } catch (e) {
+      // Sharing just falls back to the download path below.
+    }
+  }
+
+  function canShareFiles(file) {
+    return Boolean(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+  }
+
+  async function shareResult(target) {
+    playClick();
+    const text = buildShareText();
+    if (!pendingShareFile) await prepareShareFile();
+    const file = pendingShareFile;
+
+    if (file && canShareFiles(file)) {
+      try {
+        await navigator.share({ files: [file], text, title: boardTitle });
+        closeShareDialog();
+        return;
+      } catch (e) {
+        // A cancelled share sheet is not an error worth reporting.
+        if (e && e.name === "AbortError") return;
+      }
+    }
+
+    // No native share sheet (most desktop browsers): leave the user with
+    // the image saved and the caption copied so they can post it manually.
+    if (file) downloadBlob(file, file.name);
+    const copied = await copyText(text);
+    closeShareDialog();
+    window.alert(
+      target === "instagram"
+        ? `이 브라우저는 앱으로 바로 공유하는 기능을 지원하지 않습니다.\n결과 이미지를 저장했으니 인스타그램 앱에서 올려주세요.${copied ? "\n(문구는 클립보드에 복사했습니다.)" : ""}`
+        : `이 브라우저는 앱으로 바로 공유하는 기능을 지원하지 않습니다.\n결과 이미지를 저장했으니 디스코드에 첨부해주세요.${copied ? "\n(문구는 클립보드에 복사했습니다.)" : ""}`
+    );
+  }
+
+  function openShareDialog() {
+    playClick();
+    shareHint.textContent =
+      navigator.share
+        ? "휴대폰에서는 공유 시트가 열려 인스타그램·디스코드 등 원하는 앱을 고를 수 있습니다."
+        : "이 브라우저는 앱 공유를 지원하지 않아, 결과 이미지를 저장하고 문구를 클립보드에 복사합니다.";
+    shareDialog.hidden = false;
+    prepareShareFile();
+    requestAnimationFrame(() => shareCloseBtn.focus());
+  }
+
+  function closeShareDialog() {
+    shareDialog.hidden = true;
+  }
+
   // ---------- Export / import wiring ----------
-  exportBtn.addEventListener("click", exportState);
+  exportBtn.addEventListener("click", openShareDialog);
+
+  shareFileBtn.addEventListener("click", () => {
+    exportState();
+    closeShareDialog();
+  });
+
+  shareInstagramBtn.addEventListener("click", () => shareResult("instagram"));
+  shareDiscordBtn.addEventListener("click", () => shareResult("discord"));
+
+  shareCopyBtn.addEventListener("click", async () => {
+    playClick();
+    const copied = await copyText(buildShareText());
+    closeShareDialog();
+    if (!copied) window.alert("클립보드 복사가 차단되었습니다. 결과를 직접 입력해주세요.");
+  });
+
+  shareCloseBtn.addEventListener("click", () => {
+    playClick();
+    closeShareDialog();
+  });
+
+  shareDialog.addEventListener("click", (e) => {
+    if (e.target === shareDialog) closeShareDialog();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !shareDialog.hidden) closeShareDialog();
+  });
 
   importBtn.addEventListener("click", () => {
     playClick();
@@ -1730,8 +1976,11 @@ button.danger {
         spinning = false;
         const winner = entries[winnerIndex];
         const now = Date.now();
-        winner.item.wins = winner.item.wins.filter((t) => now - t <= MONTH_MS);
+        // Wins older than the widest window can never be displayed again,
+        // so drop them instead of growing the stored history forever.
+        winner.item.wins = winner.item.wins.filter((t) => now - t <= FOUR_WEEKS_MS);
         winner.item.wins.push(now);
+        lastWinner = { categoryName: winner.categoryName, name: winner.item.name, at: now };
 
         result.textContent = `결과: ${winner.categoryName} ${winner.item.name}`;
         result.classList.remove("spinning");
@@ -1743,6 +1992,25 @@ button.danger {
       { once: true }
     );
   });
+
+  // ---------- Keeping the win counts current ----------
+  // The 7-day / 28-day counts are computed against "now" at render time,
+  // so a long-open page would otherwise keep showing yesterday's numbers.
+  function refreshWinStatsIfIdle() {
+    const busy =
+      spinning ||
+      addingCategory ||
+      editingHeaderField !== null ||
+      editingCategoryId !== null ||
+      editingItemId !== null;
+    if (busy) return;
+    renderCategoryBoard();
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshWinStatsIfIdle();
+  });
+  setInterval(refreshWinStatsIfIdle, 10 * 60 * 1000);
 
   // ---------- Init ----------
   if (!loadState()) categories = createSeedCategories();

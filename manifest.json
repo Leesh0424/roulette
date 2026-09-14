@@ -1,7 +1,7 @@
 {
-  "name": "룰렛",
-  "short_name": "룰렛",
-  "description": "카테고리를 넘나들며 항목을 골라 하나의 룰렛으로 돌려보세요.",
+  "name": "커피 룰렛",
+  "short_name": "커피 룰렛",
+  "description": "오늘 행운의 커피 구매자는?",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
