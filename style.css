@@ -251,6 +251,9 @@ h1 {
     transform: none;
     flex-direction: row;
     border-radius: 999px;
+    /* Extra breathing room from the fixed win-actions bar at the
+       bottom-left, in case a short viewport lands this row nearby. */
+    margin-left: 16px;
   }
 
   #volume-slider {
@@ -410,7 +413,8 @@ h1 {
   border-radius: 6px;
   background: var(--inset);
   color: var(--fg);
-  font-size: 0.9rem;
+  /* 16px minimum keeps iOS Safari from zooming in when the field is focused. */
+  font-size: 16px;
 }
 
 .add-item-form button {
@@ -471,7 +475,8 @@ h1 {
   border-radius: 6px;
   background: var(--inset);
   color: var(--fg);
-  font-size: 0.95rem;
+  /* 16px minimum keeps iOS Safari from zooming in when the field is focused. */
+  font-size: 16px;
   width: 100%;
 }
 
@@ -574,4 +579,61 @@ button.danger {
   height: 100vh;
   pointer-events: none;
   z-index: 999;
+}
+
+/* ---------- Touch targets ----------
+   pointer:coarse (touchscreens, not just narrow windows) targets real
+   phones/tablets specifically, since the buttons below are sized fine
+   for a mouse cursor but too small to reliably tap with a finger. */
+@media (pointer: coarse) {
+  /* The fixed win-actions bar sits over the bottom-left corner; keep the
+     last row of scrollable content from ending up permanently hidden
+     underneath it. */
+  .app {
+    padding-bottom: 110px;
+  }
+
+  .category-column {
+    flex-basis: 300px;
+  }
+
+  .icon-btn {
+    padding: 8px;
+    font-size: 1rem;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .reorder-btn {
+    padding: 6px 9px;
+    font-size: 0.85rem;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .item-checkbox {
+    width: 22px;
+    height: 22px;
+  }
+
+  #mute-btn {
+    padding: 8px 10px;
+    font-size: 1rem;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .add-item-form button {
+    padding: 8px 14px;
+    min-height: 36px;
+  }
+
+  .win-actions button {
+    padding: 10px 14px;
+    font-size: 0.8rem;
+  }
+
+  .top-actions button {
+    padding: 10px 14px;
+  }
 }
