@@ -923,7 +923,9 @@ button.danger {
 
   let syncUrl = "";
   let syncStatus = "off"; // off | busy | ok | error
-  let syncInFlight = false;
+  let syncRun = null; // the in-flight request chain, if any
+  let syncRequested = false; // a sync was asked for while one was running
+  let syncConnecting = false; // the connect dialog is talking to a new URL
   let hasRemoteBackup = false;
   let pendingWins = [];
   let pendingRenames = [];
@@ -969,6 +971,18 @@ button.danger {
 
   function savePendingWins() {
     writeStored(SYNC_QUEUE_KEY, JSON.stringify(pendingWins));
+  }
+
+  // Opening the /exec URL in a browser tab lands on a one-off
+  // script.googleusercontent.com/macros/echo?... address. It looks right and
+  // even answers once, but it's a cached copy of that single response: later
+  // requests never reach the script, so writes are dropped and every pull
+  // returns the same stale (usually empty) data, wiping the board. Refuse it.
+  function syncUrlProblem(url) {
+    if (/script\.googleusercontent\.com|\/macros\/echo/i.test(url)) {
+      return "브라우저 주소창의 주소가 아니라, Apps Script 배포 화면의 '웹 앱 URL'(/exec 로 끝나는 주소)을 넣어주세요.";
+    }
+    return "";
   }
 
   // Win rows in the sheet are identified by category + item name, so a
@@ -1128,18 +1142,53 @@ button.danger {
   // ---------- The one place that talks to the sheet ----------
   // Every write returns a fresh full snapshot, so a single round trip both
   // saves our change and picks up everyone else's.
+  // One request chain at a time. A plain refresh asked for while one is
+  // running (a new win, a roster edit, a poll) is folded into a follow-up
+  // run; an explicit action (초기화, 복구, 가져오기) waits its turn instead of
+  // being dropped.
   async function syncNow(extraAction) {
-    if (!syncUrl || syncInFlight) return null;
-    syncInFlight = true;
+    if (!syncUrl || syncConnecting) return null;
+    // Also covers a bad address saved before this check existed: stop before
+    // a stale response can overwrite the local board.
+    const problem = syncUrlProblem(syncUrl);
+    if (problem) {
+      setSyncStatus("error", problem);
+      return null;
+    }
+
+    while (syncRun) {
+      if (!extraAction) {
+        syncRequested = true;
+        return null;
+      }
+      await syncRun;
+    }
+
+    syncRun = runSync(extraAction);
+    try {
+      return await syncRun;
+    } finally {
+      syncRun = null;
+      const again = syncRequested;
+      syncRequested = false;
+      // Not after an error: the regular poll retries, instead of hammering.
+      if (again && syncStatus === "ok") syncNow();
+    }
+  }
+
+  async function runSync(extraAction) {
     setSyncStatus("busy");
 
     try {
       let data = null;
+      // The roster as it was when the request whose reply we keep was sent.
+      let sentSignature = null;
 
       // Wins queued while offline go first: a snapshot must never overwrite
       // a result that hasn't reached the sheet yet.
       while (pendingWins.length) {
         const win = pendingWins[0];
+        sentSignature = rosterSignature();
         data = await callSync({ action: "win", at: win.at, category: win.category, name: win.name });
         pendingWins.shift();
         savePendingWins();
@@ -1147,30 +1196,43 @@ button.danger {
 
       const action = extraAction || pendingRosterAction();
       if (action) {
+        sentSignature = rosterSignature();
         data = await callSync(action);
-        // Only on success: a thrown error leaves them queued for the retry.
+        // Only on success (a thrown error leaves them queued), and only the
+        // renames actually sent: one made while this was out still has to go.
         if (action.action === "roster") {
-          pendingRenames = [];
-          writeStored(SYNC_RENAMES_KEY, null);
+          pendingRenames = pendingRenames.slice(action.renames.length);
+          writeStored(SYNC_RENAMES_KEY, pendingRenames.length ? JSON.stringify(pendingRenames) : null);
         }
       }
-      if (!data) data = await callSync({ action: "pull" });
+      if (!data) {
+        sentSignature = rosterSignature();
+        data = await callSync({ action: "pull" });
+      }
 
-      if (isBusy()) {
-        // Someone is mid-edit; don't yank the board out from under them.
-        // The next poll will apply it.
-        hasRemoteBackup = data.hasBackup === true;
-      } else {
+      hasRemoteBackup = data.hasBackup === true;
+
+      // A reply describes the sheet as of when its request left, and a real
+      // Apps Script round trip takes seconds. If the board changed in the
+      // meantime, applying the reply would undo that change -- and for a
+      // rename, the rename itself would still be sent later, filing the
+      // person's history under a name the roster no longer has. Keep the
+      // local board and go round again with the newer state instead.
+      const changedMeanwhile = rosterSignature() !== sentSignature || pendingWins.length > 0;
+      if (changedMeanwhile) {
+        syncRequested = true;
+      } else if (!isBusy()) {
+        // (If an inline editor is open, the next poll applies it.)
         applySnapshot(data);
         renderAll();
+      } else {
+        renderTopActions();
       }
       setSyncStatus("ok");
       return data;
     } catch (e) {
       setSyncStatus("error", e.message || String(e));
       return null;
-    } finally {
-      syncInFlight = false;
     }
   }
 
@@ -1179,8 +1241,7 @@ button.danger {
   function queueRosterPush() {
     if (!syncUrl || !pendingRosterAction()) return;
     clearTimeout(rosterPushTimer);
-    // If a sync happens to be in flight, syncNow() returns immediately and
-    // the change rides along on the next poll instead.
+    // If a sync happens to be in flight, it runs again once that finishes.
     rosterPushTimer = setTimeout(() => syncNow(), ROSTER_PUSH_DELAY_MS);
   }
 
@@ -1214,7 +1275,19 @@ button.danger {
     syncUrlInput.disabled = busy;
   }
 
+  // syncUrl temporarily points at the new address while connecting, so keep
+  // background polls out until the user has settled on it: a poll landing
+  // mid-way could apply the sheet's contents before the overwrite prompt.
   async function connectSync(url) {
+    syncConnecting = true;
+    try {
+      await connectSyncSteps(url);
+    } finally {
+      syncConnecting = false;
+    }
+  }
+
+  async function connectSyncSteps(url) {
     const previousUrl = syncUrl;
     syncUrl = url;
     setDialogBusy(true);
@@ -1234,7 +1307,14 @@ button.danger {
     // this device instead of wiping their board with nothing.
     if (!data.roster || !data.roster.length) {
       try {
-        data = await callSync(fullPushPayload());
+        const seed = fullPushPayload();
+        data = await callSync(seed);
+        // Every write answers with the sheet's contents afterwards. If what
+        // we just wrote isn't in there, the address isn't really reaching
+        // the script -- fail loudly instead of wiping this board.
+        if (seed.roster.length && (!data.roster || !data.roster.length)) {
+          throw new Error("시트에 저장되지 않았습니다. '웹 앱 URL'(/exec 로 끝나는 주소)이 맞는지 확인해주세요.");
+        }
       } catch (e) {
         syncUrl = previousUrl;
         setDialogBusy(false);
@@ -1327,6 +1407,11 @@ button.danger {
     // letting it fail as a vague network error.
     if (location.protocol === "https:" && url.slice(0, 6) !== "https:") {
       setDialogStatus("error", "이 페이지는 https로 열려 있어서 https:// 주소만 연결할 수 있습니다.");
+      return;
+    }
+    const problem = syncUrlProblem(url);
+    if (problem) {
+      setDialogStatus("error", problem);
       return;
     }
     connectSync(url);
