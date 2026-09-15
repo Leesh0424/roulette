@@ -248,6 +248,52 @@ h1 {
   transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
 }
 
+/* Everyone currently on the wheel, small, between 돌리기 and the board. */
+.wheel-roster {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.wheel-roster-caption {
+  margin: 0;
+  font-size: 0.72rem;
+  opacity: 0.55;
+}
+
+.wheel-roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 6px;
+}
+
+.wheel-roster-list li {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--inset);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.wheel-roster-list .roster-team {
+  opacity: 0.6;
+}
+
+.wheel-roster-list .roster-count {
+  margin-left: 3px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .play-controls {
   display: flex;
   align-items: center;
@@ -259,15 +305,26 @@ h1 {
 /* ---------- Category board ---------- */
 .category-board {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   overflow-x: auto;
   padding-bottom: 12px;
   text-align: left;
   justify-content: flex-start;
+  /* Cards settle flush with the left edge after a swipe. */
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
 }
 
+/* Sized to the screen: never wider than 260px, and always at least 56px
+   narrower than the strip, so part of the next card shows and it's clear
+   the row scrolls sideways. */
 .category-column {
-  flex: 0 0 270px;
+  flex: 0 0 clamp(210px, calc(100% - 56px), 260px);
+  /* Without this a flex item won't shrink below its content, and long
+     names would push the card back out past the intended width. */
+  min-width: 0;
+  box-sizing: border-box;
+  scroll-snap-align: start;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -311,7 +368,7 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px 8px;
+  padding: 5px 6px;
   background: var(--inset);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -325,7 +382,42 @@ h1 {
 .item-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+}
+
+/* How many slices this person gets on the wheel. */
+.count-stepper {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.count-stepper.muted {
+  opacity: 0.45;
+}
+
+.count-btn {
+  padding: 0 7px;
+  min-height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.count-value {
+  min-width: 1.6em;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.count-stepper.multiple .count-value {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .item-name {
@@ -597,10 +689,6 @@ button.danger {
    phones/tablets specifically, since the buttons below are sized fine
    for a mouse cursor but too small to reliably tap with a finger. */
 @media (pointer: coarse) {
-  .category-column {
-    flex-basis: 300px;
-  }
-
   .icon-btn {
     padding: 8px;
     font-size: 1rem;
@@ -620,6 +708,23 @@ button.danger {
     height: 22px;
   }
 
+  .item-main .icon-btn {
+    padding: 2px;
+    min-width: 28px;
+    min-height: 32px;
+  }
+
+  .count-btn {
+    padding: 0 7px;
+    min-height: 30px;
+  }
+
+  /* HTML5 drag-and-drop doesn't work with a finger, so on touchscreens
+     the ⋮⋮ handles only take room from the names. */
+  .drag-handle {
+    display: none;
+  }
+
   .add-item-form button {
     padding: 8px 14px;
     min-height: 36px;
@@ -631,26 +736,8 @@ button.danger {
   }
 }
 
-/* ---------- Phones ----------
-   A sideways strip of 300px cards always leaves the next card sliced off
-   at the screen edge, so narrow screens stack the cards full-width. */
+/* ---------- Phones ---------- */
 @media (max-width: 640px) {
-  .category-board {
-    flex-direction: column;
-    overflow-x: visible;
-  }
-
-  .category-column {
-    flex: none;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  /* No scroll area nested inside the page's own scroll on a touchscreen. */
-  .category-items {
-    max-height: none;
-  }
-
   h1 {
     font-size: 1.4rem;
   }
@@ -720,6 +807,8 @@ button.danger {
       <div class="play-controls">
         <button id="spin-btn" class="primary">돌리기</button>
       </div>
+
+      <div id="wheel-roster" class="wheel-roster"></div>
     </div>
 
     <div id="category-board" class="category-board"></div>
@@ -782,8 +871,8 @@ button.danger {
   const SLICE_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5"];
   const CONFETTI_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5", "#ffffff"];
 
-  // Matches the CSS breakpoint where category cards stack vertically.
-  const narrowScreen = window.matchMedia("(max-width: 640px)");
+  // How many slices one person can take on the wheel.
+  const MAX_ENTRIES_PER_ITEM = 10;
   const canvas = document.getElementById("wheel");
   const ctx = canvas.getContext("2d");
   const confettiCanvas = document.getElementById("confetti-canvas");
@@ -793,6 +882,7 @@ button.danger {
   const subtitleEl = document.getElementById("board-subtitle");
   const categoryBoard = document.getElementById("category-board");
   const spinBtn = document.getElementById("spin-btn");
+  const wheelRoster = document.getElementById("wheel-roster");
   const result = document.getElementById("result");
   const resetWinsBtn = document.getElementById("reset-wins-btn");
   const restoreWinsBtn = document.getElementById("restore-wins-btn");
@@ -818,22 +908,27 @@ button.danger {
     return `${prefix}-${nextId++}`;
   }
 
+  function clampEntryCount(value) {
+    const n = Math.round(Number(value));
+    return Number.isFinite(n) ? Math.min(MAX_ENTRIES_PER_ITEM, Math.max(1, n)) : 1;
+  }
+
   function createSeedCategories() {
     return [
       {
         id: makeId("cat"),
         name: "사업팀",
         items: [
-          { id: makeId("item"), name: "김사원", included: true, wins: [] },
-          { id: makeId("item"), name: "하대리", included: true, wins: [] },
+          { id: makeId("item"), name: "김사원", included: true, count: 1, wins: [] },
+          { id: makeId("item"), name: "하대리", included: true, count: 1, wins: [] },
         ],
       },
       {
         id: makeId("cat"),
         name: "홍보팀",
         items: [
-          { id: makeId("item"), name: "박팀장", included: true, wins: [] },
-          { id: makeId("item"), name: "이주임", included: true, wins: [] },
+          { id: makeId("item"), name: "박팀장", included: true, count: 1, wins: [] },
+          { id: makeId("item"), name: "이주임", included: true, count: 1, wins: [] },
         ],
       },
     ];
@@ -880,6 +975,7 @@ button.danger {
             id: String(item.id),
             name: String(item.name),
             included: item.included !== false,
+            count: clampEntryCount(item.count),
             wins: Array.isArray(item.wins) ? item.wins.filter((t) => typeof t === "number") : [],
           }))
         : [],
@@ -1094,8 +1190,8 @@ button.danger {
   function rosterPayload() {
     const rows = [];
     categories.forEach((category) => {
-      if (!category.items.length) rows.push([category.name, "", true]);
-      category.items.forEach((item) => rows.push([category.name, item.name, item.included]));
+      if (!category.items.length) rows.push([category.name, "", true, 1]);
+      category.items.forEach((item) => rows.push([category.name, item.name, item.included, item.count]));
     });
     return rows;
   }
@@ -1155,9 +1251,13 @@ button.danger {
     // pull that changes nothing doesn't churn the DOM or the wheel.
     const categoryIds = new Map();
     const itemIds = new Map();
+    const itemCounts = new Map();
     categories.forEach((category) => {
       categoryIds.set(category.name, category.id);
-      category.items.forEach((item) => itemIds.set(category.name + KEY_SEP + item.name, item.id));
+      category.items.forEach((item) => {
+        itemIds.set(category.name + KEY_SEP + item.name, item.id);
+        itemCounts.set(category.name + KEY_SEP + item.name, item.count);
+      });
     });
 
     const grouped = new Map();
@@ -1165,7 +1265,9 @@ button.danger {
       const categoryName = String(row[0]);
       if (!grouped.has(categoryName)) grouped.set(categoryName, []);
       const itemName = String(row[1]);
-      if (itemName) grouped.get(categoryName).push({ name: itemName, included: row[2] !== false });
+      // A sheet still running the older script has no count column; keep
+      // this device's count then, rather than resetting everyone to 1.
+      if (itemName) grouped.get(categoryName).push({ name: itemName, included: row[2] !== false, count: row[3] });
     });
 
     categories = Array.from(grouped, ([categoryName, items]) => ({
@@ -1177,6 +1279,7 @@ button.danger {
           id: itemIds.get(key) || makeId("item"),
           name: entry.name,
           included: entry.included,
+          count: entry.count === undefined || entry.count === null ? itemCounts.get(key) || 1 : clampEntryCount(entry.count),
           wins: (winsByKey.get(key) || []).slice().sort((a, b) => a - b),
         };
       }),
@@ -1683,14 +1786,51 @@ button.danger {
   // category they belong to, so a single roulette can mix e.g. 사업팀's
   // 김사원 with 홍보팀's 박팀장. Each entry keeps a reference to the real
   // item object (not a copy) so callers can mutate it.
+  // Someone put in N times gets N slices, spaced as evenly around the wheel
+  // as possible rather than side by side (which would just look like one
+  // wide slice). People with the most slices are placed first, while the
+  // wheel is emptiest: each copy aims for an evenly spaced position and
+  // takes the nearest free slot. Everyone else then fills the gaps in board
+  // order, so with everyone at 1 the wheel is simply the board order.
   function getWheelEntries() {
-    const entries = [];
+    const people = [];
     categories.forEach((category) => {
       category.items.forEach((item) => {
-        if (item.included) entries.push({ item, categoryName: category.name });
+        if (item.included) people.push({ item, categoryName: category.name });
       });
     });
-    return entries;
+
+    const total = people.reduce((sum, person) => sum + person.item.count, 0);
+    const slots = new Array(total).fill(null);
+    const mostFirst = people
+      .map((person, index) => ({ person, index }))
+      .sort((a, b) => b.person.item.count - a.person.item.count || a.index - b.index);
+
+    mostFirst.forEach(({ person }) => {
+      const copies = person.item.count;
+      const start = slots.indexOf(null);
+      for (let k = 0; k < copies; k++) {
+        const ideal = Math.round(start + (k * total) / copies) % total;
+        for (let d = 0; d < total; d++) {
+          const after = (ideal + d) % total;
+          if (slots[after] === null) {
+            slots[after] = person;
+            break;
+          }
+          const before = (ideal - d + total) % total;
+          if (slots[before] === null) {
+            slots[before] = person;
+            break;
+          }
+        }
+      }
+    });
+    return slots;
+  }
+
+  // A draw needs two different people; one person in three slices isn't one.
+  function countPeople(entries) {
+    return new Set(entries.map((entry) => entry.item)).size;
   }
 
   function reorder(array, fromIndex, toIndex) {
@@ -1744,7 +1884,7 @@ button.danger {
   }
 
   function updateSpinAvailability() {
-    spinBtn.disabled = getWheelEntries().length < 2 || spinning;
+    spinBtn.disabled = countPeople(getWheelEntries()) < 2 || spinning;
   }
 
   // True while a re-render would disrupt the user: it would either change
@@ -1760,10 +1900,108 @@ button.danger {
     );
   }
 
+  function renderWheelRoster() {
+    wheelRoster.replaceChildren();
+
+    const people = [];
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (item.included) people.push({ team: category.name, item });
+      });
+    });
+
+    const caption = document.createElement("p");
+    caption.className = "wheel-roster-caption";
+    wheelRoster.appendChild(caption);
+
+    if (!people.length) {
+      caption.textContent = "룰렛에 들어간 사람이 없습니다";
+      return;
+    }
+
+    const slices = people.reduce((sum, person) => sum + person.item.count, 0);
+    caption.textContent =
+      slices === people.length ? `룰렛 참가 ${people.length}명` : `룰렛 참가 ${people.length}명 · ${slices}칸`;
+
+    const list = document.createElement("ul");
+    list.className = "wheel-roster-list";
+    people.forEach(({ team, item }) => {
+      const li = document.createElement("li");
+      const teamSpan = document.createElement("span");
+      teamSpan.className = "roster-team";
+      teamSpan.textContent = `${team}/`;
+      li.appendChild(teamSpan);
+      li.appendChild(document.createTextNode(item.name));
+      if (item.count > 1) {
+        const countSpan = document.createElement("span");
+        countSpan.className = "roster-count";
+        countSpan.textContent = `×${item.count}`;
+        li.appendChild(countSpan);
+      }
+      list.appendChild(li);
+    });
+    wheelRoster.appendChild(list);
+  }
+
+  // Everything that depends on who is on the wheel, without rebuilding the
+  // category board (which would drop focus from the control just used).
+  function refreshWheel() {
+    updateSpinAvailability();
+    renderWheelRoster();
+    drawWheel();
+  }
+
+  function createCountStepper(item) {
+    const wrap = document.createElement("span");
+    wrap.className = "count-stepper";
+    wrap.classList.toggle("muted", !item.included);
+    wrap.title = "룰렛에 넣을 횟수";
+
+    const minus = document.createElement("button");
+    minus.type = "button";
+    minus.className = "count-btn";
+    minus.textContent = "−";
+    minus.setAttribute("aria-label", `${item.name} 룰렛에서 한 번 빼기`);
+
+    const value = document.createElement("span");
+    value.className = "count-value";
+
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "count-btn";
+    plus.textContent = "+";
+    plus.setAttribute("aria-label", `${item.name} 룰렛에 한 번 더 넣기`);
+
+    function show() {
+      value.textContent = `×${item.count}`;
+      wrap.classList.toggle("multiple", item.count > 1);
+      minus.disabled = spinning || item.count <= 1;
+      plus.disabled = spinning || item.count >= MAX_ENTRIES_PER_ITEM;
+    }
+
+    function change(delta) {
+      const next = clampEntryCount(item.count + delta);
+      if (next === item.count) return;
+      playClick();
+      item.count = next;
+      show();
+      refreshWheel();
+      saveState();
+    }
+
+    minus.addEventListener("click", () => change(-1));
+    plus.addEventListener("click", () => change(1));
+
+    wrap.append(minus, value, plus);
+    show();
+    return wrap;
+  }
+
   function renderAll() {
     renderHeader();
     renderCategoryBoard();
     updateSpinAvailability();
+    renderWheelRoster();
     renderTopActions();
     drawWheel();
     saveState();
@@ -1948,6 +2186,10 @@ button.danger {
   // ---------- Category board ----------
   function renderCategoryBoard() {
     const scrollLeft = categoryBoard.scrollLeft;
+    const listScroll = new Map();
+    categoryBoard.querySelectorAll(".category-items").forEach((list) => {
+      listScroll.set(list.dataset.categoryId, list.scrollTop);
+    });
     categoryBoard.innerHTML = "";
 
     categories.forEach((category, categoryIndex) => {
@@ -1967,8 +2209,7 @@ button.danger {
         createReorderButtons(
           categories,
           categoryIndex,
-          // Cards stack vertically on phones, so "earlier/later" is up/down there.
-          narrowScreen.matches ? ["▲", "▼"] : ["◀", "▶"],
+          ["◀", "▶"],
           category.name,
           renderAll
         )
@@ -2050,6 +2291,7 @@ button.danger {
 
       const itemsList = document.createElement("ul");
       itemsList.className = "category-items";
+      itemsList.dataset.categoryId = category.id;
 
       category.items.forEach((item, itemIndex) => {
         const li = document.createElement("li");
@@ -2064,7 +2306,6 @@ button.danger {
         itemHandle.textContent = "⋮⋮";
         itemHandle.setAttribute("aria-hidden", "true");
         main.appendChild(itemHandle);
-        main.appendChild(createReorderButtons(category.items, itemIndex, ["▲", "▼"], item.name, renderAll));
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
@@ -2072,11 +2313,12 @@ button.danger {
         checkbox.checked = item.included;
         checkbox.disabled = spinning;
         checkbox.setAttribute("aria-label", `${item.name} 룰렛에 포함`);
+        const stepper = createCountStepper(item);
         checkbox.addEventListener("change", () => {
           playClick();
           item.included = checkbox.checked;
-          updateSpinAvailability();
-          drawWheel();
+          stepper.classList.toggle("muted", !item.included);
+          refreshWheel();
           saveState();
         });
         main.appendChild(checkbox);
@@ -2120,6 +2362,7 @@ button.danger {
           span.textContent = item.name;
           span.title = item.name;
           main.appendChild(span);
+          main.appendChild(stepper);
 
           const editBtn = document.createElement("button");
           editBtn.type = "button";
@@ -2207,7 +2450,7 @@ button.danger {
         const value = addItemInput.value.trim();
         if (!value) return;
         playClick();
-        category.items.push({ id: makeId("item"), name: value, included: true, wins: [] });
+        category.items.push({ id: makeId("item"), name: value, included: true, count: 1, wins: [] });
         addItemInput.value = "";
         renderAll();
       });
@@ -2289,6 +2532,9 @@ button.danger {
 
     categoryBoard.appendChild(addColumn);
     categoryBoard.scrollLeft = scrollLeft;
+    categoryBoard.querySelectorAll(".category-items").forEach((list) => {
+      list.scrollTop = listScroll.get(list.dataset.categoryId) || 0;
+    });
   }
 
   // ---------- Export ----------
@@ -2436,7 +2682,7 @@ button.danger {
   // ---------- Spin ----------
   spinBtn.addEventListener("click", () => {
     const entries = getWheelEntries();
-    if (spinning || entries.length < 2) return;
+    if (spinning || countPeople(entries) < 2) return;
     spinning = true;
     result.textContent = "돌리는 중...";
     result.classList.remove("celebrate");
@@ -2580,10 +2826,6 @@ button.danger {
     cornerObserver.observe(cornerRight);
   }
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLayout);
-
-  narrowScreen.addEventListener("change", () => {
-    if (!isBusy()) renderCategoryBoard();
-  });
 
   // ---------- Init ----------
   loadSyncSettings();
