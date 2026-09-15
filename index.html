@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>커피 룰렛</title>
 
 <!-- PWA: lets phones "Add to Home Screen" and open this in a standalone,
@@ -32,6 +32,15 @@
   --banner-fg: #ffe3ec;
   --banner-border: var(--accent);
   --inset: #131316;
+  /* Non-zero only on notched phones (and in the installed iOS app, whose
+     status bar overlays the page). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Measured from the corner buttons at runtime (see fitLayout()). */
+  --corner-clear: 100px;
+  --corner-height: 0px;
 }
 
 * {
@@ -51,7 +60,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 14px 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--corner-height) + var(--safe-top));
+  padding: calc(14px + var(--safe-top)) calc(16px + var(--safe-right)) 14px calc(16px + var(--safe-left));
   background: var(--banner-bg);
   border-bottom: 3px solid var(--banner-border);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
@@ -70,9 +83,13 @@ body {
 #result {
   width: 100%;
   margin: 0;
-  /* Clear space for the fixed corner-action stacks on both sides
-     (the right stack's "당첨횟수 초기화" label is the widest button). */
-  padding: 0 100px;
+  /* Clear the fixed corner stacks on both sides (equal on both, so the
+     text stays centred). Measured, since button widths vary by device. */
+  padding: 0 var(--corner-clear);
+  /* Break Korean at spaces ("사업팀 / 김사원"), not mid-word ("사업 / 팀");
+     a single name too long for the line may still break. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
   text-align: center;
   font-size: clamp(1rem, 4vw, 2.4rem);
   font-weight: 800;
@@ -106,22 +123,32 @@ body {
 }
 
 /* Pinned to the top corners of the viewport, outside the result banner,
-   each stacked vertically flush against its edge. */
+   each stacked vertically flush against its edge. The frame and rounding
+   live on the stack rather than on first/last buttons, so a hidden button
+   (내보내기/가져오기) can't leave a corner square. */
 .corner-actions {
   position: fixed;
-  top: 0;
+  top: var(--safe-top);
   z-index: 21;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .corner-actions button {
   padding: 6px 10px;
   font-size: 0.75rem;
+  white-space: nowrap;
   border-radius: 0;
   background: var(--card);
   color: var(--fg);
-  border: 1px solid var(--border);
+  border: none;
+}
+
+.corner-actions button + button {
+  border-top: 1px solid var(--border);
 }
 
 .corner-actions button:hover:not(:disabled) {
@@ -129,45 +156,26 @@ body {
 }
 
 .corner-actions-left {
-  left: 0;
-}
-
-.corner-actions-left button {
+  left: var(--safe-left);
   border-left: none;
+  border-radius: 0 0 8px 0;
 }
 
-.corner-actions-left button:first-child {
-  border-top-right-radius: 8px;
-}
-
-.corner-actions-left button:last-child {
-  border-bottom-right-radius: 8px;
-  border-top: none;
-}
-
+/* stretch: both buttons take the wider label's width, so 초기화 and 복구
+   are the same size. */
 .corner-actions-right {
-  right: 0;
-  align-items: flex-end;
-}
-
-.corner-actions-right button {
+  right: var(--safe-right);
+  align-items: stretch;
   border-right: none;
-}
-
-.corner-actions-right button:first-child {
-  border-top-left-radius: 8px;
-}
-
-.corner-actions-right button:last-child {
-  border-bottom-left-radius: 8px;
-  border-top: none;
+  border-radius: 0 0 0 8px;
 }
 
 /* ---------- Layout ---------- */
 .app {
   width: min(1100px, 96vw);
+  box-sizing: border-box;
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 24px calc(16px + var(--safe-right)) calc(48px + var(--safe-bottom)) calc(16px + var(--safe-left));
   text-align: center;
 }
 
@@ -205,6 +213,9 @@ h1 {
 /* The wrap is the stationary bowl; only the canvas inside spins. */
 .wheel-wrap {
   position: relative;
+  box-sizing: border-box;
+  width: var(--wheel-size, 390px);
+  max-width: 100%;
   padding: 15px;
   border-radius: 50%;
   background: var(--rim);
@@ -230,8 +241,9 @@ h1 {
 
 #wheel {
   display: block;
-  max-width: 100%;
+  width: 100%;
   height: auto;
+  aspect-ratio: 1;
   border-radius: 50%;
   transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
 }
@@ -585,12 +597,6 @@ button.danger {
    phones/tablets specifically, since the buttons below are sized fine
    for a mouse cursor but too small to reliably tap with a finger. */
 @media (pointer: coarse) {
-  /* Corner buttons grow below with more padding, so #result needs more
-     clearance too or its text runs under "당첨횟수 초기화". */
-  #result {
-    padding: 0 128px;
-  }
-
   .category-column {
     flex-basis: 300px;
   }
@@ -624,13 +630,69 @@ button.danger {
     font-size: 0.8rem;
   }
 }
+
+/* ---------- Phones ----------
+   A sideways strip of 300px cards always leaves the next card sliced off
+   at the screen edge, so narrow screens stack the cards full-width. */
+@media (max-width: 640px) {
+  .category-board {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .category-column {
+    flex: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* No scroll area nested inside the page's own scroll on a touchscreen. */
+  .category-items {
+    max-height: none;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+  }
+
+  .subtitle {
+    margin-bottom: 14px;
+  }
+}
+
+/* The corner stacks sit either side of the result line, so on the
+   narrowest phones every pixel of their width comes out of the text.
+   Slimmer sides, same tap height. */
+@media (max-width: 400px) {
+  .corner-actions button {
+    min-height: 36px;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
+}
+
+/* Stable "screen height with the browser toolbars showing", read by
+   fitLayout(). Unlike innerHeight it doesn't change as the address bar
+   slides away while scrolling, so the wheel doesn't jump around. */
+#viewport-probe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 100vh;
+  height: 100svh;
+  visibility: hidden;
+  pointer-events: none;
+}
 </style>
 </head>
 <body>
   <div class="corner-actions corner-actions-left">
     <button id="sync-btn" type="button">동기화<span id="sync-dot"></span></button>
-    <button id="export-btn" type="button">내보내기</button>
-    <button id="import-btn" type="button">가져오기</button>
+    <!-- Taken off screen now that sheet sync exists, but kept working:
+         remove `hidden` from both buttons to bring them back. -->
+    <button id="export-btn" type="button" hidden>내보내기</button>
+    <button id="import-btn" type="button" hidden>가져오기</button>
     <input id="import-file-input" type="file" accept="application/json,.json" hidden>
   </div>
 
@@ -664,6 +726,7 @@ button.danger {
   </main>
 
   <canvas id="confetti-canvas"></canvas>
+  <div id="viewport-probe" aria-hidden="true"></div>
 
   <div id="confirm-dialog" class="modal-overlay" hidden>
     <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message">
@@ -719,6 +782,8 @@ button.danger {
   const SLICE_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5"];
   const CONFETTI_COLORS = ["#ff8fa3", "#ffc38f", "#ffe58f", "#8fe3b0", "#8fd3f4", "#c9a8f5", "#ffffff"];
 
+  // Matches the CSS breakpoint where category cards stack vertically.
+  const narrowScreen = window.matchMedia("(max-width: 640px)");
   const canvas = document.getElementById("wheel");
   const ctx = canvas.getContext("2d");
   const confettiCanvas = document.getElementById("confetti-canvas");
@@ -1899,7 +1964,14 @@ button.danger {
       handle.setAttribute("aria-hidden", "true");
       header.appendChild(handle);
       header.appendChild(
-        createReorderButtons(categories, categoryIndex, ["◀", "▶"], category.name, renderAll)
+        createReorderButtons(
+          categories,
+          categoryIndex,
+          // Cards stack vertically on phones, so "earlier/later" is up/down there.
+          narrowScreen.matches ? ["▲", "▼"] : ["◀", "▶"],
+          category.name,
+          renderAll
+        )
       );
 
       if (editingCategoryId === category.id) {
@@ -2445,6 +2517,74 @@ button.danger {
   setInterval(refreshWinStatsIfIdle, 10 * 60 * 1000);
   setInterval(() => syncNow(), SYNC_POLL_MS);
 
+  // ---------- Fitting the screen ----------
+  // Phones range from squat to very tall, so the wheel is sized to whichever
+  // runs out first: the width of the page, or the height left below the
+  // banner and title with room for 돌리기. The canvas is re-rendered at the
+  // screen's pixel density at that size, so it stays sharp instead of being
+  // a stretched 360px bitmap.
+  const WHEEL_MIN = 220;
+  const WHEEL_MAX = 520;
+  const wheelWrap = document.querySelector(".wheel-wrap");
+  const playControls = document.querySelector(".play-controls");
+  const cornerLeft = document.querySelector(".corner-actions-left");
+  const cornerRight = document.querySelector(".corner-actions-right");
+  const viewportProbe = document.getElementById("viewport-probe");
+
+  function fitCorners() {
+    const root = document.documentElement.style;
+    // How far each stack reaches into the result line, measured from where
+    // the line actually starts (the banner has its own padding, and on wide
+    // screens the line is centred well away from the corners). The larger of
+    // the two goes on both sides so the text stays centred.
+    const line = result.getBoundingClientRect();
+    const gap = 8;
+    const intoLeft = cornerLeft.getBoundingClientRect().right + gap - line.left;
+    const intoRight = line.right - (cornerRight.getBoundingClientRect().left - gap);
+    root.setProperty("--corner-clear", `${Math.max(0, Math.ceil(Math.max(intoLeft, intoRight)))}px`);
+    root.setProperty("--corner-height", `${Math.max(cornerLeft.offsetHeight, cornerRight.offsetHeight)}px`);
+  }
+
+  function fitWheel() {
+    const byWidth = wheelWrap.parentElement.clientWidth;
+    const top = wheelWrap.getBoundingClientRect().top + window.scrollY;
+    const sectionGap = parseFloat(getComputedStyle(wheelWrap.parentElement).rowGap) || 0;
+    const byHeight = viewportProbe.offsetHeight - top - sectionGap - playControls.offsetHeight - 16;
+    const size = Math.round(Math.min(WHEEL_MAX, byWidth, Math.max(WHEEL_MIN, byHeight)));
+    document.documentElement.style.setProperty("--wheel-size", `${size}px`);
+
+    const rim = parseFloat(getComputedStyle(wheelWrap).paddingLeft) || 0;
+    const density = Math.min(window.devicePixelRatio || 1, 3);
+    const pixels = Math.max(1, Math.round((size - rim * 2) * density));
+    if (canvas.width !== pixels) {
+      canvas.width = pixels;
+      canvas.height = pixels;
+      drawWheel();
+    }
+  }
+
+  function fitLayout() {
+    fitCorners();
+    fitWheel();
+  }
+
+  // Resize also fires while a phone's address bar slides in and out; that's
+  // harmless because the probe height it reads stays put, so the size comes
+  // out the same and nothing is redrawn.
+  window.addEventListener("resize", fitLayout);
+  // The corner buttons change width with the sync dot, and once web fonts
+  // settle.
+  if ("ResizeObserver" in window) {
+    const cornerObserver = new ResizeObserver(fitLayout);
+    cornerObserver.observe(cornerLeft);
+    cornerObserver.observe(cornerRight);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLayout);
+
+  narrowScreen.addEventListener("change", () => {
+    if (!isBusy()) renderCategoryBoard();
+  });
+
   // ---------- Init ----------
   loadSyncSettings();
   if (!loadState()) categories = createSeedCategories();
@@ -2455,6 +2595,7 @@ button.danger {
   // copy that may be days old.
   if (pushedRosterSignature === null) rememberPushedRoster();
   renderAll();
+  fitLayout();
   // Shows the local copy first, then reconciles with the sheet, so the app
   // is usable immediately (and still usable if the sheet is unreachable).
   syncNow();
