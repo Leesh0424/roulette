@@ -501,6 +501,75 @@ button.danger {
   flex: 1;
 }
 
+/* ---------- Sync dialog ---------- */
+.sync-card {
+  width: min(460px, 100%);
+  text-align: left;
+}
+
+.sync-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.sync-help {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #b4b4bd;
+}
+
+#sync-url-input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--inset);
+  color: var(--fg);
+  /* 16px minimum keeps iOS Safari from zooming in when the field is focused. */
+  font-size: 16px;
+}
+
+.sync-status {
+  margin: 12px 0 18px;
+  min-height: 1.3em;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.sync-status.ok {
+  color: #8fe3b0;
+}
+
+.sync-status.error {
+  color: #ff8fa3;
+}
+
+.sync-status.busy {
+  color: #ffe58f;
+}
+
+/* The connection state rides on the corner button itself, so it's visible
+   without opening the dialog. */
+#sync-dot {
+  margin-left: 4px;
+  font-size: 0.7em;
+  vertical-align: middle;
+}
+
+#sync-btn.sync-ok #sync-dot {
+  color: #8fe3b0;
+}
+
+#sync-btn.sync-error #sync-dot {
+  color: #ff8fa3;
+}
+
+#sync-btn.sync-busy #sync-dot {
+  color: #ffe58f;
+}
+
 /* ---------- Confetti ---------- */
 #confetti-canvas {
   position: fixed;
@@ -559,6 +628,7 @@ button.danger {
 </head>
 <body>
   <div class="corner-actions corner-actions-left">
+    <button id="sync-btn" type="button">동기화<span id="sync-dot"></span></button>
     <button id="export-btn" type="button">내보내기</button>
     <button id="import-btn" type="button">가져오기</button>
     <input id="import-file-input" type="file" accept="application/json,.json" hidden>
@@ -604,6 +674,25 @@ button.danger {
       </div>
     </div>
   </div>
+
+  <div id="sync-dialog" class="modal-overlay" hidden>
+    <div class="modal-card sync-card" role="dialog" aria-modal="true" aria-labelledby="sync-dialog-title">
+      <h2 id="sync-dialog-title">동료와 당첨 기록 공유</h2>
+      <p class="sync-help">
+        구글 시트 하나에 명단과 당첨 기록을 자동으로 저장하고 불러옵니다.
+        같은 주소를 넣은 사람끼리 기록이 실시간에 가깝게 공유됩니다.
+        주소를 만드는 방법은 README의 “동료들과 당첨 기록 공유하기”를 참고하세요.
+      </p>
+      <input id="sync-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+             placeholder="https://script.google.com/macros/s/..../exec">
+      <p id="sync-status-text" class="sync-status"></p>
+      <div class="modal-actions">
+        <button id="sync-cancel-btn" type="button">취소</button>
+        <button id="sync-disconnect-btn" type="button" class="danger">연결 해제</button>
+        <button id="sync-connect-btn" type="button" class="primary">연결</button>
+      </div>
+    </div>
+  </div>
   <script>
     // Winner-picking logic. `random` is injectable so it can be tested
     // deterministically; the app itself always calls it with Math.random.
@@ -645,6 +734,15 @@ button.danger {
   const exportBtn = document.getElementById("export-btn");
   const importBtn = document.getElementById("import-btn");
   const importFileInput = document.getElementById("import-file-input");
+
+  const syncBtn = document.getElementById("sync-btn");
+  const syncDot = document.getElementById("sync-dot");
+  const syncDialog = document.getElementById("sync-dialog");
+  const syncUrlInput = document.getElementById("sync-url-input");
+  const syncStatusText = document.getElementById("sync-status-text");
+  const syncConnectBtn = document.getElementById("sync-connect-btn");
+  const syncDisconnectBtn = document.getElementById("sync-disconnect-btn");
+  const syncCancelBtn = document.getElementById("sync-cancel-btn");
 
   const confirmDialog = document.getElementById("confirm-dialog");
   const confirmMessage = document.getElementById("confirm-message");
@@ -749,6 +847,8 @@ button.danger {
       // Storage can be unavailable (private mode, quota); the app still
       // works for the current session without it.
     }
+    // No-op unless a shared sheet is connected.
+    queueRosterPush();
   }
 
   function loadState() {
@@ -782,7 +882,9 @@ button.danger {
     }
 
     const ok = await showConfirm(
-      "현재 데이터를 가져온 파일 내용으로 덮어씁니다. 계속하시겠습니까?",
+      syncUrl
+        ? "현재 데이터와 연결된 구글 시트의 내용을 모두 가져온 파일 내용으로 덮어씁니다. 계속하시겠습니까?"
+        : "현재 데이터를 가져온 파일 내용으로 덮어씁니다. 계속하시겠습니까?",
       "가져오기",
       true
     );
@@ -795,7 +897,448 @@ button.danger {
     editingItemId = null;
     applyVolume();
     renderAll();
+
+    // The sheet is the shared source of truth, so an import has to replace
+    // it too; otherwise the next pull would undo what was just imported.
+    if (syncUrl) await syncNow(fullPushPayload());
   }
+
+  // ---------- Google Sheet sync ----------
+  // Entirely optional: with no sheet URL configured the app behaves exactly
+  // as before (localStorage only). Once a URL is set, the roster and the win
+  // log live in a shared Google Sheet, so everyone who connects to the same
+  // sheet sees the same numbers. localStorage stays in place underneath as
+  // the offline fallback.
+  const SYNC_URL_KEY = "roulette-sync-url";
+  const SYNC_QUEUE_KEY = "roulette-sync-queue";
+  const SYNC_ROSTER_KEY = "roulette-sync-roster";
+  const SYNC_RENAMES_KEY = "roulette-sync-renames";
+  const SYNC_POLL_MS = 30 * 1000;
+  const ROSTER_PUSH_DELAY_MS = 1200;
+  // Apps Script is called with a GET query string so the request stays a
+  // "simple" one (no CORS preflight, which Apps Script web apps don't
+  // answer). POST is only used when a payload outgrows what a URL can carry.
+  const SYNC_MAX_URL = 6000;
+  const KEY_SEP = " ";
+
+  let syncUrl = "";
+  let syncStatus = "off"; // off | busy | ok | error
+  let syncInFlight = false;
+  let hasRemoteBackup = false;
+  let pendingWins = [];
+  let pendingRenames = [];
+  let pushedRosterSignature = null;
+  let rosterPushTimer = null;
+
+  function readStored(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeStored(key, value) {
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (e) {
+      // Same tolerance as saveState(): storage may simply be unavailable.
+    }
+  }
+
+  function loadSyncSettings() {
+    syncUrl = readStored(SYNC_URL_KEY) || "";
+    // Remembered across reloads so an edit made while offline is still
+    // recognised as "not on the sheet yet" the next time we connect.
+    pushedRosterSignature = readStored(SYNC_ROSTER_KEY);
+    try {
+      const parsed = JSON.parse(readStored(SYNC_QUEUE_KEY) || "[]");
+      pendingWins = Array.isArray(parsed) ? parsed.filter((win) => win && Number.isFinite(win.at)) : [];
+    } catch (e) {
+      pendingWins = [];
+    }
+    try {
+      const parsed = JSON.parse(readStored(SYNC_RENAMES_KEY) || "[]");
+      pendingRenames = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      pendingRenames = [];
+    }
+    syncStatus = syncUrl ? "busy" : "off";
+  }
+
+  function savePendingWins() {
+    writeStored(SYNC_QUEUE_KEY, JSON.stringify(pendingWins));
+  }
+
+  // Win rows in the sheet are identified by category + item name, so a
+  // rename has to be carried over to the existing rows or that person's
+  // history would silently detach from them. An empty `fromName` means
+  // "every row in this category" (i.e. the category itself was renamed).
+  function noteRename(fromCategory, fromName, toCategory, toName) {
+    if (!syncUrl) return;
+    if (fromCategory === toCategory && fromName === toName) return;
+    pendingRenames.push({ fromCategory, fromName, toCategory, toName });
+    writeStored(SYNC_RENAMES_KEY, JSON.stringify(pendingRenames));
+  }
+
+  async function callSync(payload) {
+    const body = JSON.stringify(payload);
+    const asQuery =
+      syncUrl + (syncUrl.indexOf("?") === -1 ? "?" : "&") + "p=" + encodeURIComponent(body);
+
+    const response =
+      asQuery.length <= SYNC_MAX_URL
+        ? await fetch(asQuery, { method: "GET", redirect: "follow" })
+        : await fetch(syncUrl, {
+            method: "POST",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body,
+          });
+
+    if (!response.ok) throw new Error(`시트 서버가 오류를 반환했습니다 (HTTP ${response.status}).`);
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error("응답을 읽지 못했습니다. 웹 앱 주소와 '액세스 권한: 모든 사용자' 설정을 확인해주세요.");
+    }
+    if (!data || data.ok !== true) throw new Error((data && data.error) || "시트에서 오류를 반환했습니다.");
+    return data;
+  }
+
+  // ---------- Snapshot <-> local state ----------
+  // A category with no items still gets one row (with an empty name) so it
+  // survives a round trip through the sheet.
+  function rosterPayload() {
+    const rows = [];
+    categories.forEach((category) => {
+      if (!category.items.length) rows.push([category.name, "", true]);
+      category.items.forEach((item) => rows.push([category.name, item.name, item.included]));
+    });
+    return rows;
+  }
+
+  function winsPayload() {
+    const rows = [];
+    categories.forEach((category) => {
+      category.items.forEach((item) => {
+        item.wins.forEach((at) => rows.push([at, category.name, item.name]));
+      });
+    });
+    return rows;
+  }
+
+  function fullPushPayload() {
+    return {
+      action: "push",
+      roster: rosterPayload(),
+      wins: winsPayload(),
+      title: boardTitle,
+      subtitle: boardSubtitle,
+    };
+  }
+
+  function rosterSignature() {
+    return JSON.stringify([rosterPayload(), boardTitle, boardSubtitle]);
+  }
+
+  function rememberPushedRoster() {
+    pushedRosterSignature = rosterSignature();
+    // Only meaningful while connected; don't leave sync keys behind for
+    // someone who never turns sync on.
+    if (syncUrl) writeStored(SYNC_ROSTER_KEY, pushedRosterSignature);
+  }
+
+  // Returns the write the sheet is still missing, or null when it's current.
+  function pendingRosterAction() {
+    if (rosterSignature() === pushedRosterSignature && !pendingRenames.length) return null;
+    return {
+      action: "roster",
+      roster: rosterPayload(),
+      renames: pendingRenames,
+      title: boardTitle,
+      subtitle: boardSubtitle,
+    };
+  }
+
+  function applySnapshot(data) {
+    const winsByKey = new Map();
+    (data.wins || []).forEach((row) => {
+      const key = String(row[1]) + KEY_SEP + String(row[2]);
+      if (!winsByKey.has(key)) winsByKey.set(key, []);
+      winsByKey.get(key).push(Number(row[0]));
+    });
+
+    // Reuse the ids already assigned to the same category/item names, so a
+    // pull that changes nothing doesn't churn the DOM or the wheel.
+    const categoryIds = new Map();
+    const itemIds = new Map();
+    categories.forEach((category) => {
+      categoryIds.set(category.name, category.id);
+      category.items.forEach((item) => itemIds.set(category.name + KEY_SEP + item.name, item.id));
+    });
+
+    const grouped = new Map();
+    (data.roster || []).forEach((row) => {
+      const categoryName = String(row[0]);
+      if (!grouped.has(categoryName)) grouped.set(categoryName, []);
+      const itemName = String(row[1]);
+      if (itemName) grouped.get(categoryName).push({ name: itemName, included: row[2] !== false });
+    });
+
+    categories = Array.from(grouped, ([categoryName, items]) => ({
+      id: categoryIds.get(categoryName) || makeId("category"),
+      name: categoryName,
+      items: items.map((entry) => {
+        const key = categoryName + KEY_SEP + entry.name;
+        return {
+          id: itemIds.get(key) || makeId("item"),
+          name: entry.name,
+          included: entry.included,
+          wins: (winsByKey.get(key) || []).slice().sort((a, b) => a - b),
+        };
+      }),
+    }));
+
+    if (typeof data.title === "string" && data.title.trim()) boardTitle = data.title;
+    if (typeof data.subtitle === "string" && data.subtitle.trim()) boardSubtitle = data.subtitle;
+    hasRemoteBackup = data.hasBackup === true;
+    // What we just applied *is* what the sheet holds, so don't echo it back.
+    rememberPushedRoster();
+  }
+
+  // ---------- Status indicator ----------
+  const SYNC_TITLES = {
+    off: "동기화 꺼짐 — 눌러서 구글 시트에 연결",
+    busy: "구글 시트와 동기화하는 중...",
+    ok: "구글 시트와 연결됨",
+    error: "동기화 실패",
+  };
+
+  function setSyncStatus(status, message) {
+    syncStatus = status;
+    syncDot.textContent = status === "off" ? "" : "●";
+    syncBtn.className = status === "off" ? "" : `sync-${status}`;
+    syncBtn.title = message ? `${SYNC_TITLES[status]}: ${message}` : SYNC_TITLES[status];
+  }
+
+  // ---------- The one place that talks to the sheet ----------
+  // Every write returns a fresh full snapshot, so a single round trip both
+  // saves our change and picks up everyone else's.
+  async function syncNow(extraAction) {
+    if (!syncUrl || syncInFlight) return null;
+    syncInFlight = true;
+    setSyncStatus("busy");
+
+    try {
+      let data = null;
+
+      // Wins queued while offline go first: a snapshot must never overwrite
+      // a result that hasn't reached the sheet yet.
+      while (pendingWins.length) {
+        const win = pendingWins[0];
+        data = await callSync({ action: "win", at: win.at, category: win.category, name: win.name });
+        pendingWins.shift();
+        savePendingWins();
+      }
+
+      const action = extraAction || pendingRosterAction();
+      if (action) {
+        data = await callSync(action);
+        // Only on success: a thrown error leaves them queued for the retry.
+        if (action.action === "roster") {
+          pendingRenames = [];
+          writeStored(SYNC_RENAMES_KEY, null);
+        }
+      }
+      if (!data) data = await callSync({ action: "pull" });
+
+      if (isBusy()) {
+        // Someone is mid-edit; don't yank the board out from under them.
+        // The next poll will apply it.
+        hasRemoteBackup = data.hasBackup === true;
+      } else {
+        applySnapshot(data);
+        renderAll();
+      }
+      setSyncStatus("ok");
+      return data;
+    } catch (e) {
+      setSyncStatus("error", e.message || String(e));
+      return null;
+    } finally {
+      syncInFlight = false;
+    }
+  }
+
+  // Called from saveState() on every render, so it has to be cheap and
+  // debounced: typing a name or reordering fires several renders in a row.
+  function queueRosterPush() {
+    if (!syncUrl || !pendingRosterAction()) return;
+    clearTimeout(rosterPushTimer);
+    // If a sync happens to be in flight, syncNow() returns immediately and
+    // the change rides along on the next poll instead.
+    rosterPushTimer = setTimeout(() => syncNow(), ROSTER_PUSH_DELAY_MS);
+  }
+
+  // ---------- Sync dialog ----------
+  function setDialogStatus(kind, message) {
+    syncStatusText.className = `sync-status ${kind}`;
+    syncStatusText.textContent = message;
+  }
+
+  // `prefill` keeps a URL the user just typed in the field when the dialog
+  // has to reopen (e.g. they backed out of the overwrite confirmation),
+  // instead of making them paste it again.
+  function openSyncDialog(prefill) {
+    syncUrlInput.value = prefill === undefined ? syncUrl : prefill;
+    syncDisconnectBtn.hidden = !syncUrl;
+    setDialogStatus(
+      syncUrl ? "ok" : "",
+      syncUrl ? "이 기기는 위 시트에 연결되어 있습니다." : ""
+    );
+    syncDialog.hidden = false;
+    requestAnimationFrame(() => syncUrlInput.focus());
+  }
+
+  function closeSyncDialog() {
+    syncDialog.hidden = true;
+  }
+
+  function setDialogBusy(busy) {
+    syncConnectBtn.disabled = busy;
+    syncDisconnectBtn.disabled = busy;
+    syncUrlInput.disabled = busy;
+  }
+
+  async function connectSync(url) {
+    const previousUrl = syncUrl;
+    syncUrl = url;
+    setDialogBusy(true);
+    setDialogStatus("busy", "시트에 연결하는 중...");
+
+    let data;
+    try {
+      data = await callSync({ action: "pull" });
+    } catch (e) {
+      syncUrl = previousUrl;
+      setDialogBusy(false);
+      setDialogStatus("error", e.message || String(e));
+      return;
+    }
+
+    // An empty sheet is the first person setting things up, so seed it from
+    // this device instead of wiping their board with nothing.
+    if (!data.roster || !data.roster.length) {
+      try {
+        data = await callSync(fullPushPayload());
+      } catch (e) {
+        syncUrl = previousUrl;
+        setDialogBusy(false);
+        setDialogStatus("error", e.message || String(e));
+        return;
+      }
+      setDialogBusy(false);
+      finishConnect(url, data);
+      window.alert("이 기기의 명단과 당첨 기록을 시트에 올렸습니다.\n동료들이 같은 주소로 연결하면 기록이 공유됩니다.");
+      return;
+    }
+
+    setDialogBusy(false);
+    closeSyncDialog();
+    const ok = await showConfirm(
+      "시트에 이미 저장된 내용이 있습니다. 이 기기의 명단과 당첨 기록을 시트 내용으로 바꿉니다. 계속하시겠습니까?",
+      "불러오기",
+      true
+    );
+    if (!ok) {
+      syncUrl = previousUrl;
+      openSyncDialog(url);
+      setDialogStatus("", "연결하지 않았습니다.");
+      return;
+    }
+    finishConnect(url, data);
+  }
+
+  function finishConnect(url, data) {
+    syncUrl = url;
+    writeStored(SYNC_URL_KEY, url);
+    applySnapshot(data);
+    editingHeaderField = null;
+    editingCategoryId = null;
+    addingCategory = false;
+    editingItemId = null;
+    renderAll();
+    setSyncStatus("ok");
+    closeSyncDialog();
+  }
+
+  async function disconnectSync() {
+    closeSyncDialog();
+    const ok = await showConfirm(
+      "시트 연결을 끊습니다. 지금까지의 내용은 이 기기에 그대로 남지만, 이후 변경은 시트에 반영되지 않습니다. 계속하시겠습니까?",
+      "연결 해제",
+      true
+    );
+    if (!ok) {
+      openSyncDialog();
+      return;
+    }
+    syncUrl = "";
+    pendingWins = [];
+    pendingRenames = [];
+    pushedRosterSignature = null;
+    hasRemoteBackup = false;
+    writeStored(SYNC_URL_KEY, null);
+    writeStored(SYNC_QUEUE_KEY, null);
+    writeStored(SYNC_ROSTER_KEY, null);
+    writeStored(SYNC_RENAMES_KEY, null);
+    setSyncStatus("off");
+    renderAll();
+  }
+
+  syncBtn.addEventListener("click", () => {
+    playClick();
+    openSyncDialog();
+  });
+
+  syncCancelBtn.addEventListener("click", () => {
+    playClick();
+    closeSyncDialog();
+  });
+
+  syncDisconnectBtn.addEventListener("click", () => {
+    playClick();
+    disconnectSync();
+  });
+
+  syncConnectBtn.addEventListener("click", () => {
+    playClick();
+    const url = syncUrlInput.value.trim();
+    if (!/^https?:\/\/\S+$/.test(url)) {
+      setDialogStatus("error", "http:// 또는 https:// 로 시작하는 웹 앱 주소를 넣어주세요.");
+      return;
+    }
+    // A page served over https can't call an http endpoint at all (the
+    // browser blocks it as mixed content), so say so up front rather than
+    // letting it fail as a vague network error.
+    if (location.protocol === "https:" && url.slice(0, 6) !== "https:") {
+      setDialogStatus("error", "이 페이지는 https로 열려 있어서 https:// 주소만 연결할 수 있습니다.");
+      return;
+    }
+    connectSync(url);
+  });
+
+  syncUrlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") syncConnectBtn.click();
+  });
+
+  syncDialog.addEventListener("click", (e) => {
+    if (e.target === syncDialog && !syncConnectBtn.disabled) closeSyncDialog();
+  });
 
   // ---------- Audio ----------
   let audioCtx = null;
@@ -1054,6 +1597,19 @@ button.danger {
     spinBtn.disabled = getWheelEntries().length < 2 || spinning;
   }
 
+  // True while a re-render would disrupt the user: it would either change
+  // the wheel mid-spin or destroy the inline editor they're typing into.
+  // Background refreshes (win-count recalculation, sheet pulls) wait it out.
+  function isBusy() {
+    return (
+      spinning ||
+      addingCategory ||
+      editingHeaderField !== null ||
+      editingCategoryId !== null ||
+      editingItemId !== null
+    );
+  }
+
   function renderAll() {
     renderHeader();
     renderCategoryBoard();
@@ -1132,7 +1688,8 @@ button.danger {
 
   function renderTopActions() {
     resetWinsBtn.disabled = spinning;
-    restoreWinsBtn.disabled = spinning || !winsBackup;
+    // When a sheet is connected the backup lives there, not in winsBackup.
+    restoreWinsBtn.disabled = spinning || !(syncUrl ? hasRemoteBackup : winsBackup);
   }
 
   // ---------- Wheel drawing ----------
@@ -1273,7 +1830,10 @@ button.danger {
           if (done) return;
           done = true;
           const value = editInput.value.trim();
-          if (value) category.name = value;
+          if (value) {
+            noteRename(category.name, "", value, "");
+            category.name = value;
+          }
           editingCategoryId = null;
           renderAll();
         };
@@ -1377,7 +1937,10 @@ button.danger {
             if (done) return;
             done = true;
             const value = editInput.value.trim();
-            if (value) item.name = value;
+            if (value) {
+              noteRename(category.name, item.name, category.name, value);
+              item.name = value;
+            }
             editingItemId = null;
             renderAll();
           };
@@ -1614,6 +2177,14 @@ button.danger {
     playClick();
     const ok = await showConfirm("정말 초기화 하시겠습니까?", "초기화", true);
     if (!ok) return;
+
+    // With a sheet connected, initialising has to happen there so everyone
+    // sees it; the sheet keeps the old rows in a 당첨기록_백업 tab.
+    if (syncUrl) {
+      await syncNow({ action: "resetWins" });
+      return;
+    }
+
     const backup = {};
     categories.forEach((category) => {
       category.items.forEach((item) => {
@@ -1630,10 +2201,16 @@ button.danger {
   });
 
   restoreWinsBtn.addEventListener("click", async () => {
-    if (!winsBackup) return;
+    if (!(syncUrl ? hasRemoteBackup : winsBackup)) return;
     playClick();
     const ok = await showConfirm("정말 복구하시겠습니까?", "복구", false);
     if (!ok) return;
+
+    if (syncUrl) {
+      await syncNow({ action: "restoreWins" });
+      return;
+    }
+
     categories.forEach((category) => {
       category.items.forEach((item) => {
         if (Array.isArray(winsBackup[item.id])) item.wins = winsBackup[item.id].slice();
@@ -1748,12 +2325,20 @@ button.danger {
         winner.item.wins = winner.item.wins.filter((t) => now - t <= FOUR_WEEKS_MS);
         winner.item.wins.push(now);
 
+        // Queued rather than sent directly, so a result is never lost to a
+        // dropped connection: it's retried on the next successful sync.
+        if (syncUrl) {
+          pendingWins.push({ at: now, category: winner.categoryName, name: winner.item.name });
+          savePendingWins();
+        }
+
         result.textContent = `결과: ${winner.categoryName} ${winner.item.name}`;
         result.classList.remove("spinning");
         result.classList.add("celebrate");
         renderAll();
         launchConfetti();
         playFanfare();
+        syncNow();
       },
       { once: true }
     );
@@ -1763,25 +2348,31 @@ button.danger {
   // The 7-day / 28-day counts are computed against "now" at render time,
   // so a long-open page would otherwise keep showing yesterday's numbers.
   function refreshWinStatsIfIdle() {
-    const busy =
-      spinning ||
-      addingCategory ||
-      editingHeaderField !== null ||
-      editingCategoryId !== null ||
-      editingItemId !== null;
-    if (busy) return;
+    if (isBusy()) return;
     renderCategoryBoard();
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refreshWinStatsIfIdle();
+    if (document.hidden) return;
+    refreshWinStatsIfIdle();
+    syncNow();
   });
   setInterval(refreshWinStatsIfIdle, 10 * 60 * 1000);
+  setInterval(() => syncNow(), SYNC_POLL_MS);
 
   // ---------- Init ----------
+  loadSyncSettings();
   if (!loadState()) categories = createSeedCategories();
   applyVolume();
+  setSyncStatus(syncStatus);
+  // On a first run there is nothing pending, so record the loaded state as
+  // already-pushed: startup should pull the sheet, not overwrite it with a
+  // copy that may be days old.
+  if (pushedRosterSignature === null) rememberPushedRoster();
   renderAll();
+  // Shows the local copy first, then reconciles with the sheet, so the app
+  // is usable immediately (and still usable if the sheet is unreachable).
+  syncNow();
 })();
   </script>
 
