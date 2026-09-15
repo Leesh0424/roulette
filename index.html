@@ -919,7 +919,7 @@ button.danger {
   // "simple" one (no CORS preflight, which Apps Script web apps don't
   // answer). POST is only used when a payload outgrows what a URL can carry.
   const SYNC_MAX_URL = 6000;
-  const KEY_SEP = " ";
+  const KEY_SEP = "\u0000";
 
   let syncUrl = "";
   let syncStatus = "off"; // off | busy | ok | error
