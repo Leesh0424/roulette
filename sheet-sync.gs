@@ -21,7 +21,8 @@ const ROSTER_SHEET = "명단";
 const SETTINGS_SHEET = "설정";
 
 const WINS_HEADER = ["시각", "카테고리", "이름"];
-const ROSTER_HEADER = ["카테고리", "이름", "룰렛 포함"];
+const ROSTER_HEADER = ["카테고리", "이름", "룰렛 포함", "넣은 횟수"];
+const MAX_ENTRIES_PER_ITEM = 10;
 const SETTINGS_HEADER = ["키", "값"];
 
 const TIME_FORMAT = "yyyy-mm-dd hh:mm";
@@ -105,9 +106,16 @@ function snapshot() {
     .filter((row) => isFinite(row[0]));
 
   // 이름이 비어 있는 줄은 "항목이 하나도 없는 카테고리"를 뜻합니다.
-  const roster = dataRows(sheetNamed(ROSTER_SHEET, ROSTER_HEADER), 3)
+  const roster = dataRows(sheetNamed(ROSTER_SHEET, ROSTER_HEADER), 4)
     .filter((row) => String(row[0]).trim() !== "")
-    .map((row) => [String(row[0]).trim(), String(row[1]).trim(), isTruthy(row[2])]);
+    // "넣은 횟수" 칸이 비어 있으면(예전 버전으로 만든 시트) null을 보내서,
+    // 앱이 그 기기에 설정돼 있던 횟수를 그대로 쓰게 합니다.
+    .map((row) => [
+      String(row[0]).trim(),
+      String(row[1]).trim(),
+      isTruthy(row[2]),
+      row[3] === "" || row[3] === null ? null : toCount(row[3]),
+    ]);
 
   const settings = {};
   dataRows(sheetNamed(SETTINGS_SHEET, SETTINGS_HEADER), 2).forEach((row) => {
@@ -140,6 +148,13 @@ function isTruthy(value) {
   if (typeof value === "boolean") return value;
   const text = String(value).trim().toUpperCase();
   return text !== "FALSE" && text !== "N" && text !== "0" && text !== "NO";
+}
+
+// 룰렛에 몇 칸 넣을지. 비어 있거나 이상한 값이면 1, 최대 10.
+function toCount(value) {
+  const n = Math.round(Number(value));
+  if (!isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_ENTRIES_PER_ITEM, n);
 }
 
 // ---------- 쓰기 ----------
@@ -191,11 +206,14 @@ function writeRoster(request) {
     String(row[0] || ""),
     String(row[1] || ""),
     row[2] !== false,
+    toCount(row[3]),
   ]);
 
-  clearBelowHeader(target, 3);
+  // 예전 버전으로 만든 시트에는 "넣은 횟수" 열 제목이 없으니 매번 맞춰 둡니다.
+  target.getRange(1, 1, 1, ROSTER_HEADER.length).setValues([ROSTER_HEADER]).setFontWeight("bold");
+  clearBelowHeader(target, 4);
   if (rows.length) {
-    target.getRange(2, 1, rows.length, 3).setValues(rows);
+    target.getRange(2, 1, rows.length, 4).setValues(rows);
     target.getRange(2, 3, rows.length, 1).insertCheckboxes();
   }
   writeSettings(request);
